@@ -177,6 +177,7 @@ def SampleExpPSD2D(psd, R, gridspace, Kmin, Kmax, dK, CircOrSqu='square', useCUP
         pp = cp
     else:
         pp = np
+        print("This can be rather slow without GPU acceleration.")
     #create spatial grid
     qq = pp.linspace(-R, R, int(2*R/gridspace))
     qq = pp.meshgrid(qq, qq)

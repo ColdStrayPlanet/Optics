@@ -21,6 +21,7 @@ OpenMP, such as PyTorch and potentially other libraries you're importing.
 """
 
 import torch
+from torch.utils.data import DataLoader
 from SampleGen import GenerateFieldPairs as GFP
 import UNet4CrossField as UN
 
@@ -36,7 +37,7 @@ input_images = dom; target_images = cro  # dominant and cross polarization field
 
 
 cids = UN.ComplexImageDataSet(input_images, target_images)
-train_loader = UN.DataLoader(cids, batch_size=10, shuffle=True)
+train_loader = DataLoader(cids, batch_size=10, shuffle=True)
 
 # Hyperparameters and configuration
 in_channels  = input_images.shape[ 1]  # Real and imaginary parts
