@@ -52,16 +52,58 @@ class TorchFourierOptics:
        x_torch = (2 * x_new - x.max() - x.min()) / (x.max() - x.min())
        grid_x, grid_y = torch.meshgrid(x_torch, x_torch, indexing='xy')
        grid = torch.stack((grid_x, grid_y), dim=-1)  # (len(x_new), len(x_new), 2)
-
        # Ajustar las dimensiones de `g` para `grid_sample`
        g = g.unsqueeze(0)  # Añadir dimensión de lote: (1, 2, N, N)
-
        # Unsqueeze en grid si es necesario para asegurar que batch_size es 1
        grid = grid.unsqueeze(0)  # Añadir dimensión de lote: (1, len(x_new), len(x_new), 2)
-
        gnew = torch.nn.functional.grid_sample(g, grid, mode='bicubic', padding_mode='zeros', align_corners=False)
-
        return gnew[0], x_new
+
+    """
+    Simula una óptica perfecta de transformada de Fourier usando la propagación FFT.
+
+    Args:
+    - g (torch.Tensor): Campo de entrada con dos canales (real e imaginario) de tamaño (2, N, N).
+    - x (torch.Tensor): Coordenadas 1D del grid en el plano de entrada, en micrómetros, de tamaño (N,).
+    - x_out (torch.Tensor): Coordenadas 1D del grid en el plano de salida, en micrómetros.
+    - focal_length (float): Distancia focal del sistema óptico en micrómetros.
+
+    Let L = max(x) - min(x), and M be the number of points in the array, padded to have length M+P.
+      Define L' = L((M+P)/M). The frequency corresponding to point m in the FFT is m/L' = (m/L)(M/(M+P))
+      After undergoing an optical Fourier transform via a lens with focal length f, the spatial frequency
+      corresponding to a distance u from the center is u/(f*\lambda), where \lambda is the wavelength. Thus,
+      the FFT frequency spacing is (1/L)(M/(M+P)) and the physical frequency spacing is (\delta u)/(f * \lambda).
+
+
+    Returns:
+    - torch.Tensor: Campo en el plano de salida, transformado por la óptica FT.
+    """
+    def FFT_prop(self, g, x, x_out, focal_length):
+      M = len(x)
+      assert g[1].shape == (M,M)
+      wavelength = self.params['wavelength']
+      tru_freq_spacing = (x_out[1]-x_out[0])*(focal_length*wavelength) # physical spatial frequency spacing
+      #figure out the amount of padding needed for the FFT to capture the physical spatial frequencies
+      MP = 32  # MP is the total number of points in the padded array (1D)
+      while True:
+         P = MP - M  #  P is the number of zero-pad values
+         if P < 0: continue
+         FFT_spacing = (M/MP)/(x.max() - x.min())
+         if tru_freq_spacing/FFT_spacing >=2:
+            break
+         else: MP *= 2
+
+      g_pad = torch.zeros((2,MP,MP))  # create padded array
+      k1 = MP//2 - M//2;  k2 = k1 + M
+      g_pad[0, k1:k2, k1:k2] = g[0]
+      g_pad[1, k1:k2, k1:k2] = g[1]
+      g_pad = torch.complex(g_pad[0],g_pad[1])
+      f_complex = torch.fft.fftshift(torch.fft.fft2(torch.fft.ifftshift(g_pad)))
+      ff = torch.stack(torch.real(f_complex), torch.imag(f_complex) ,dim=0)
+
+      x_pad = torch.linspace(x.min(),x.max(),MP)
+      f = self.ResampleField2D(ff, x_pad, x_out)
+      return f
 
 
     #2D Fresenel prop using convolution in the spatial domain
@@ -176,14 +218,45 @@ class TorchFourierOptics:
     #Apply the thin lens phase transformation
     #g - two channel input field (each channel is 2D)
     #x - 1D coordinates: len(x) = g.shape[0]=g.shape[1]
+    # set_dx = [True | False | dx_new (same units as x)]
+    #     True  - forces full sampling of quadratic phase according to self.params['max_chirp_step_deg']
+    #     False -  the grid spacing of the output plane is the same as that of the input plane, but it
+    #                will not execute if the quadaratic phase is not resolved as above
+    #     dx_new - grid spacing of the output plane, but it
+    #                will not execute if the quadratic phase is not resolved as above
     #center - two numbers center_x and center_y indicating the center of the
     #     lens with respect to 'x'.  Can be  a tuple, array or list
     #focal_length - same units as x
 
-    def ApplyThinLens2D(self, g, x, center, focal_length):
+    def ApplyThinLens2D(self, g, x, set_dx, center, focal_length):
           if g.size(1) != x.size(0):
               raise ValueError("El campo de entrada y las coordenadas deben tener el mismo tamaño.")
-          wavelength = self.params['wavelength']  # Longitud de onda
+          wavelength = self.params['wavelength']
+          philim = self.params['max_chirp_step_deg']*torch.pi/180
+          max_step = philim*wavelength*focal_length/(2*torch.pi*x.max())
+
+          if isinstance(set_dx, bool):
+            if set_dx == False:
+                dx_new = x[1] - x[0]
+                if dx_new > max_step:
+                   print("ApplyThinLens2D: You chose set_dx to be False, but the current sampling is too coarse.")
+                   print("max dx =",max_step,"current dx =", dx_new)
+                   raise Exception()
+            else:  # set_x is True. Use chirp sampling criterion
+                    dx_new = max_step
+          else:  # set_dx is not a bool. Take dx_new to be value of set_dx
+            if not isinstance(set_dx, float):
+                raise Exception("ApplyThinLens2D: set_dx must be a bool or a float.")
+            if set_dx <= 0:
+                raise Exception("ApplyThinsLens2D: numerical value of set_dx must be > 0.")
+            dx_new = set_dx
+            if dx_new > max_step:
+                   print("ApplyThinLens2D: You chose set_dx to be,", set_dx ," but that is too coarse.  max dx =",max_step)
+                   raise Exception()
+
+      apply resampling
+
+
           center_x, center_y = center
 
           # Crear mallas de coordenadas
@@ -259,73 +332,6 @@ class TorchFourierOptics:
        h = torch.stack((g_real, g_imag), dim=0)
 
        return h
-
-    """
-    Simula una óptica perfecta de transformada de Fourier usando la propagación FFT.
-
-    Args:
-    - g (torch.Tensor): Campo de entrada con dos canales (real e imaginario) de tamaño (2, N, N).
-    - x (torch.Tensor): Coordenadas 1D del grid en el plano de entrada, en micrómetros, de tamaño (N,).
-    - x_out (torch.Tensor): Coordenadas 1D del grid en el plano de salida, en micrómetros.
-    - focal_length (float): Distancia focal del sistema óptico en micrómetros.
-
-    Returns:
-    - torch.Tensor: Campo en el plano de salida, transformado por la óptica FT.
-    """
-    def FFT_prop(self, g, x, x_out, focal_length):
-      # Longitud de onda del parámetro de clase
-      wavelength = self.params['wavelength']
-
-      # Calcular el escalado de las frecuencias espaciales de salida
-      dx_in = x[1] - x[0]
-      dx_out = x_out[1] - x_out[0]
-      N_in = len(x)
-      N_out = len(x_out)
-
-
-    # Dimensiones de entrada y salida deseadas
-    N_in = len(x)
-    N_out = len(x_out)
-
-    # Calcular el escalado del plano de salida
-    dx_in = x[1] - x[0]
-
-    # Calcular el máximo tamaño de frecuencias espaciales
-    frequency_scale = wavelength * focal_length / (dx_in * N_in)
-
-    # Determinar el padding necesario para mayor resolución
-    overpad = max(N_out - N_in, 0)
-    total_size = N_in + overpad
-
-    # Aplicar zero-padding
-    pad_total = overpad // 2
-    g_padded_real = torch.nn.functional.pad(g[0], (pad_total, pad_total, pad_total, pad_total))
-    g_padded_imag = torch.nn.functional.pad(g[1], (pad_total, pad_total, pad_total, pad_total))
-    g_padded = torch.complex(g_padded_real, g_padded_imag)
-
-    # FFT 2D del campo de entrada con overpadding
-    G_complex = torch.fft.fftshift(torch.fft.fft2(torch.fft.ifftshift(g_padded)))
-
-    # Escalar el resultado
-    G_scaled = G_complex * frequency_scale
-
-    # Cálculo de reescalado a salida basada en x_out
-    x_coords = torch.linspace(-total_size / 2, total_size / 2 - 1, steps=total_size)
-
-    # Submuestreo específico para coincidir con frecuencias de x_out
-    start = (x_coords >= x_out.min()).nonzero(as_tuple=True)[0][0]
-    end = start + N_out
-
-    G_final = G_scaled[start:end, start:end]
-
-    # Separar el resultado en partes reales e imaginarias
-    G_real = G_final.real
-    G_imag = G_final.imag
-
-    # Recomponer el campo transformado
-    h = torch.stack((G_real, G_imag), dim=0)
-
-    return h
 
 
 ################## end TorchFourerOptics Class ######################
