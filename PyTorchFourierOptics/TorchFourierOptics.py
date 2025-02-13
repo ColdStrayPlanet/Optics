@@ -228,42 +228,38 @@ class TorchFourierOptics:
     #     lens with respect to 'x'.  Can be  a tuple, array or list
     #focal_length - same units as x
 
-    def ApplyThinLens2D(self, g, x, set_dx, center, focal_length):
+    def ApplyThinLens2D(self, g, x, set_dx, focal_length, center=[0,0]):
           if g.size(1) != x.size(0):
               raise ValueError("El campo de entrada y las coordenadas deben tener el mismo tamaño.")
           wavelength = self.params['wavelength']
           philim = self.params['max_chirp_step_deg']*torch.pi/180
           max_step = philim*wavelength*focal_length/(2*torch.pi*x.max())
-
-          if isinstance(set_dx, bool):
-            if set_dx == False:
-                dx_new = x[1] - x[0]
-                if dx_new > max_step:
-                   print("ApplyThinLens2D: You chose set_dx to be False, but the current sampling is too coarse.")
-                   print("max dx =",max_step,"current dx =", dx_new)
-                   raise Exception()
-            else:  # set_x is True. Use chirp sampling criterion
-                    dx_new = max_step
-          else:  # set_dx is not a bool. Take dx_new to be value of set_dx
-            if not isinstance(set_dx, float):
-                raise Exception("ApplyThinLens2D: set_dx must be a bool or a float.")
-            if set_dx <= 0:
-                raise Exception("ApplyThinsLens2D: numerical value of set_dx must be > 0.")
-            dx_new = set_dx
-            if dx_new > max_step:
-                   print("ApplyThinLens2D: You chose set_dx to be,", set_dx ," but that is too coarse.  max dx =",max_step)
-                   raise Exception()
-
-      apply resampling
-
-
           center_x, center_y = center
 
-          # Crear mallas de coordenadas
-          X, Y = torch.meshgrid(x - center_x, x - center_y, indexing='xy')
+          if isinstance(set_dx, bool):
+               if set_dx == False:
+                   dx_new = x[1] - x[0]
+                   if dx_new > max_step:
+                      print("ApplyThinLens2D: You chose set_dx to be False, but the current sampling is too coarse.")
+                      print("max dx =",max_step,"current dx =", dx_new)
+                      raise Exception()
+               else:  # set_x is True. Use chirp sampling criterion
+                       dx_new = max_step
+          else:  # set_dx is not a bool. Take dx_new to be value of set_dx
+               if not isinstance(set_dx, float):
+                   raise Exception("ApplyThinLens2D: set_dx must be a bool or a float.")
+               if set_dx <= 0:
+                   raise Exception("ApplyThinsLens2D: numerical value of set_dx must be > 0.")
+               dx_new = set_dx
+               if dx_new > max_step:
+                      print("ApplyThinLens2D: You chose set_dx to be,", set_dx ," but that is too coarse.  max dx =",max_step)
+                      raise Exception()
 
-          # Calcular la fase cuadrática aplicada por el lente delgado
-          phase_factor = torch.exp(-1j * torch.pi * (X**2 + Y**2) / (wavelength * focal_length))
+          x_new = torch.linspace(x.min(),x.max(), int( (x.max()-x.min())/dx_new))
+          g = self.ResampleField2D(g,x,x_new)
+
+          X, Y = torch.meshgrid(x_new - center_x, x_new - center_y, indexing='xy')
+          phase_factor = torch.exp(-1j * torch.pi * (X**2 + Y**2) / (wavelength*focal_length))
 
           # Separar canales real e imaginario de g
           g_real = g[0]
@@ -273,7 +269,7 @@ class TorchFourierOptics:
           g_complex = torch.complex(g_real, g_imag)
 
           # Aplicar la fase del lente
-          g_transformed = g_complex * phase_factor
+          g_transformed = g_complex*phase_factor
 
           # Dividir el campo resultado en sus partes real e imaginaria
           g_transformed_real = g_transformed.real
@@ -285,46 +281,58 @@ class TorchFourierOptics:
           return h
 
     """
-        Aplica una combinación de un stop y una apertura con amortiguamiento a un campo óptico 2D.
+        This applies a centered stop and/or an aperture to the field.
+        In the clear zone,   it multiplies the field by unity.
+        In the blocked zone,                            zero.
+        There is quadratic rolloff between unity and zero, specified by the kwarg smoothing_distance
 
         Args:
         - g (torch.Tensor): Campo de entrada con dos canales (real e imaginario) de tamaño (2, N, N).
         - x (torch.Tensor): Coordenadas 1D del grid en micrómetros, de tamaño (N,).
-        - center (tuple or list): Coordenadas (x, y) del centro del stop y la apertura.
-        - r_stop (float): Radio del stop en micrómetros.
-        - r_ap (float): Radio de la apertura en micrómetros, debe ser mayor que r_stop.
-        - damping_length (float): Longitud de amortiguamiento para suavizar el paso de stop a apertura.
+        - d_stop (float): diameter of stop (microns).  If negative, no stop is applied
+        - d_ap (float):   diameter of aperture (microns).  If negative, no aperture is applied.
         - shape (str): Forma de la apertura ('circle' o 'square').
+            if 'circle' - both the stop and aperture have the specified diameters and are circular
+            if 'square' - the 'diameter'  corresponds to the size length
+        - smoothing distance
 
         Returns:
         - torch.Tensor: Campo truncado resultante con dos canales (real e imaginario).
     """
-    def ApplyStopAndAperture(self, g, x, center, r_stop, r_ap, damping_length, shape='circle'):
+    def ApplyStopAndOrAperture(self, g, x, d_stop, d_ap=-1, shape='circle', smoothing_distance=100):
+       if shape not in ['circle','square']:
+           raise ValueError("Shape must be 'circle' or 'square'.")
+       if d_stop <=0. and d_ap <= 0.:
+           raise ValueError("input parameters d_stop and/or d_ap must be greater than zero.")
+       if d_ap <= d_stop:
+           raise ValueError("d_stop must be less than d_ap.")
+       if (d_ap - d_stop)/2 <= 2*smoothing_distance:
+          raise ValueError("smoothing_distance is too large; must satisfy (d_ap - d_stop)/2 > 2*smoothing_distance.")
 
-       X, Y = torch.meshgrid(x - center[0], x - center[1], indexing='xy')
-
-       # Calcular la distancia radial del centro
+       X, Y = torch.meshgrid(x,x,indexing='xy')
        if shape == 'circle':
            r = torch.sqrt(X**2 + Y**2)
        elif shape == 'square':
            r = torch.max(torch.abs(X), torch.abs(Y))
-       else:
-           raise ValueError("Shape must be 'circle' or 'square'.")
 
-       # Crear el factor de máscara
-       mask = torch.ones_like(r)
+       mask = torch.ones_like(Y)
+       if d_stop > 0:  # apply stop
+          mask[r <= d_stop/2] = 0
+       if d_ap > 0:  # apply aperture
+          mask[r > d_ap/2] = 0
 
-       # Apagar la luz en el interior del stop
-       mask[r <= r_stop] = 0
+       # apply quadratic roll-off between r_stop y r_ap
+       if d_stop > 0:
+          rolloff_stop = ((r - d_stop/2) / smoothing_distance)**2
+          rolloff_region = (r > d_stop/2) & (r < d_stop/2 + smoothing_distance)
+          mask[rolloff_region] = rolloff_stop[rolloff_region]
+       # Apply quadratic roll-off for the aperture
+       if d_ap > 0:
+          rolloff_ap = ((d_ap/2 - r) / smoothing_distance)**2
+          rolloff_region = (r > d_ap/2 - smoothing_distance) & (r < d_ap/2)
+          mask[rolloff_region] = rolloff_ap[rolloff_region]
 
-       # Aplicar amortiguamiento cuadrático entre r_stop y r_ap
-       transition_zone = (r > r_stop) & (r < r_ap)
-       mask[transition_zone] = ((r[transition_zone] - r_stop) / (r_ap - r_stop)) ** 2
 
-       # También asegúrate de que la máscara sea 0 para r > r_ap
-       mask[r >= r_ap] = 0
-
-       # Aplicar la máscara al campo
        g_real = g[0] * mask
        g_imag = g[1] * mask
 
