@@ -18,8 +18,8 @@ example_parameters = {'wavelength': 0.9, 'max_chirp_step_deg':30.0}
 
 ################## start TorchFourerOptics Class ######################
 class TorchFourierOptics:
-    def __init__(self, params):
-        self.params = example_parameters
+    def __init__(self, params=example_parameters):
+        self.params = params
 
     def GetDxAndLength(self, x):
         nx = x.shape[0]
@@ -29,6 +29,13 @@ class TorchFourierOptics:
         assert dx > 0
         return dx, length
 
+    #Calculate the intensity given the field g
+    #  g must have shape (2, N, M) where g[0] is the real part of the field, and g[1] is the imaginary part
+    def Field2Intensity(self, g):
+       if g.shape[0] != 2:
+          raise ValueError("The input field g must have 2 channels.")
+       h = g[0]**2 + g[1]**2
+       return h.unsqueeze(0)  # intensity must have 1 channel
 
     #Resample the tensor g on a new grid.  This relies on the robust routine torch.nn.functional.grid_sample.
     # This routine has input arguments: (input, grid, mode='bilinear', padding_mode='zeros', align_corners=None)
@@ -40,9 +47,6 @@ class TorchFourierOptics:
     #         x_torch =  ( 2*x_new - x.max() - x.min() )/(x.max() - x.min())  where x_torch corresponds a 1D coordinate in the grid array
     #         x and y coords of the new samples
     #  See the pytorch  docs for more detail
-
-
-
     def ResampleField2D(self, g, x, x_new):
        if isinstance(x, np.ndarray):
            x = torch.from_numpy(x).float()
@@ -57,7 +61,7 @@ class TorchFourierOptics:
        # Unsqueeze en grid si es necesario para asegurar que batch_size es 1
        grid = grid.unsqueeze(0)  # Añadir dimensión de lote: (1, len(x_new), len(x_new), 2)
        gnew = torch.nn.functional.grid_sample(g, grid, mode='bicubic', padding_mode='zeros', align_corners=False)
-       return gnew[0], x_new
+       return gnew[0]
 
     """
     Simula una óptica perfecta de transformada de Fourier usando la propagación FFT.
@@ -80,15 +84,18 @@ class TorchFourierOptics:
     """
     def FFT_prop(self, g, x, x_out, focal_length):
       M = len(x)
-      assert g[1].shape == (M,M)
+      assert g[0].shape == (M,M)
       wavelength = self.params['wavelength']
-      tru_freq_spacing = (x_out[1]-x_out[0])*(focal_length*wavelength) # physical spatial frequency spacing
+      tru_freq_spacing = (x_out[1]-x_out[0])/(focal_length*wavelength) # physical spatial frequency spacing
       #figure out the amount of padding needed for the FFT to capture the physical spatial frequencies
       MP = 32  # MP is the total number of points in the padded array (1D)
       while True:
          P = MP - M  #  P is the number of zero-pad values
-         if P < 0: continue
-         FFT_spacing = (M/MP)/(x.max() - x.min())
+         if P < 0:
+            MP *=2
+            continue
+         L_pad = (MP/M)*(x.max() - x.min())
+         FFT_spacing = 1/L_pad
          if tru_freq_spacing/FFT_spacing >=2:
             break
          else: MP *= 2
@@ -99,10 +106,17 @@ class TorchFourierOptics:
       g_pad[1, k1:k2, k1:k2] = g[1]
       g_pad = torch.complex(g_pad[0],g_pad[1])
       f_complex = torch.fft.fftshift(torch.fft.fft2(torch.fft.ifftshift(g_pad)))
-      ff = torch.stack(torch.real(f_complex), torch.imag(f_complex) ,dim=0)
+      ff = torch.stack((torch.real(f_complex), torch.imag(f_complex)),dim=0)
+      if np.remainder(MP,2) == 0:
+         fft_grid = torch.linspace(-MP//2,MP//2-1,MP)*FFT_spacing
+      else:
+         fft_grid = torch.linspace(-MP//2,MP//2  ,MP)*FFT_spacing
+      #scale the spatial frequency grid back to (output plane) distance units.
+      #Note the conversion of fft_grid back to spatial coordinates refers to the input plane, not the output plane.
+      #  So, if you are focusing a collimated beam you could have fft_grid be much wider than x_out.  This is OK.
+      fft_grid *= focal_length*wavelength
 
-      x_pad = torch.linspace(x.min(),x.max(),MP)
-      f = self.ResampleField2D(ff, x_pad, x_out)
+      f = self.ResampleField2D(ff, fft_grid , x_out)
       return f
 
 
@@ -344,8 +358,11 @@ class TorchFourierOptics:
 
 ################## end TorchFourerOptics Class ######################
 
+
+################### Helper Routines #############################
+
 # Convertit un tableau NumPy complexe (N, N) en un tenseur PyTorch de forme (2, N, N)
-def numpy_complex_to_torch(real_imag_array: np.ndarray) -> torch.Tensor:
+def numpy_complex2torch(real_imag_array: np.ndarray) -> torch.Tensor:
     if not np.iscomplexobj(real_imag_array):
         raise ValueError("L'entrée doit être un tableau NumPy de nombres complexes.")
 
@@ -355,14 +372,45 @@ def numpy_complex_to_torch(real_imag_array: np.ndarray) -> torch.Tensor:
     return torch.stack((real_part, imag_part), dim=0)
 
 #Convertit un tenseur PyTorch (2, N, N) en un tableau NumPy complexe (N, N).
-def torch_to_numpy_complex(torch_tensor: torch.Tensor) -> np.ndarray:
-    if torch_tensor.shape[0] != 2:
+def torch2numpy_complex(inputTensor: torch.Tensor) -> np.ndarray:
+    if inputTensor.shape[0] != 2:
         raise ValueError("Le tenseur d'entrée doit avoir la forme (2, N, N).")
 
-    real_part = torch_tensor[0].cpu().numpy()
-    imag_part = torch_tensor[1].cpu().numpy()
+    real_part = inputTensor[0].cpu().numpy()
+    imag_part = inputTensor[1].cpu().numpy()
 
     return real_part + 1j * imag_part
+
+
+
+######################## Testing Routines  ############################
+
+def test_OpticalFT():  # take an optical FT of a disk
+   N = 256  # input field is NxN
+   w = 22.e3  # input grid width (microns)
+   d_circ = 20.e3  # circle diameter (microns)
+   focal_length = 1.e6  # (microns)
+
+   optics = TorchFourierOptics(params={'wavelength': 0.9, 'max_chirp_step_deg':30.0})
+   x_in = torch.linspace(-w/2 + w/(2*N), w/2 - w/(2*N), N)  # input grid (1D)
+   lam = optics.params['wavelength']
+   fld = focal_length*lam/d_circ  # "lambda/D" scaled by the focal length
+   d_out = 40*fld;  dx_out = fld/3; N_out = int(d_out//dx_out)
+   x_out = torch.linspace(-d_out/2 + d_out/(2*N_out), d_out/2 - d_out/(2*N_out) ,N_out)
+
+   X,Y = torch.meshgrid(x_in, x_in, indexing='ij')
+   R = torch.sqrt(X**2 + Y**2)
+   circ = torch.ones_like(Y)
+   circ[R > d_circ/2] = 0.
+
+   #specify two-channel input field
+   g_in = torch.stack((circ, torch.zeros_like(circ)), axis=0)
+   # take optical FT
+   g = optics.FFT_prop(g_in, x_in, x_out, focal_length)
+
+   return None
+
+
 
 def test_fresnel_propagation():
     # Configurar el campo de entrada
@@ -395,10 +443,8 @@ def test_fresnel_propagation():
     plt.imshow(np.abs(input_field), extent=(x.min(), x.max(), x.min(), x.max()))
     plt.title('Campo de entrada')
     plt.colorbar()
-
     plt.subplot(1, 2, 2)
     plt.imshow(np.abs(output_field_np), extent=(s[0].item(), s[-1].item(), s[0].item(), s[-1].item()))
     plt.title('Campo de salida (propagado)')
     plt.colorbar()
-
     plt.show()
