@@ -10,7 +10,6 @@ Differentiable Fourier Optics with PyTorch
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
-import torch.fft
 
 #lengths are  in microns.  angles are in degrees
 example_parameters = {'wavelength': 0.9, 'max_chirp_step_deg':30.0}
@@ -18,10 +17,13 @@ example_parameters = {'wavelength': 0.9, 'max_chirp_step_deg':30.0}
 
 ################## start TorchFourerOptics Class ######################
 class TorchFourierOptics:
-    def __init__(self, params=example_parameters):
+   def __init__(self, params=example_parameters):
         self.params = params
+        if torch.cuda.is_available():
+           self.device = 'cuda'
+        else: self.device = 'cpu'
 
-    def GetDxAndLength(self, x):
+   def GetDxAndLength(self, x):
         nx = x.shape[0]
         dx = x[1] - x[0]
         length = (x[-1] - x[0]) * (1 + 1 / (nx - 1))
@@ -31,7 +33,7 @@ class TorchFourierOptics:
 
     #Calculate the intensity given the field g
     #  g must have shape (2, N, M) where g[0] is the real part of the field, and g[1] is the imaginary part
-    def Field2Intensity(self, g):
+   def Field2Intensity(self, g):
        if g.shape[0] != 2:
           raise ValueError("The input field g must have 2 channels.")
        h = g[0]**2 + g[1]**2
@@ -47,7 +49,31 @@ class TorchFourierOptics:
     #         x_torch =  ( 2*x_new - x.max() - x.min() )/(x.max() - x.min())  where x_torch corresponds a 1D coordinate in the grid array
     #         x and y coords of the new samples
     #  See the pytorch  docs for more detail
-    def ResampleField2D(self, g, x, x_new):
+   def ResampleField2D(self, g, x, x_new):
+       # Convert arrays to torch tensors and move them to the device
+       if isinstance(x, np.ndarray):
+           x = torch.from_numpy(x).float().to(self.device)
+       if isinstance(x_new, np.ndarray):
+           x_new = torch.from_numpy(x_new).float().to(self.device)
+
+       # Ensure input tensor g is on the correct device
+       g = g.to(self.device)
+
+       # Scale and create the grid on the device
+       x_torch = (2 * x_new - x.max() - x.min()) / (x.max() - x.min()).to(self.device)
+       grid_x, grid_y = torch.meshgrid(x_torch, x_torch, indexing='xy')  # ouputs on same device as x_torch
+       grid = torch.stack((grid_x, grid_y), dim=-1)
+
+       # Add batch dimension to g and grid
+       g = g.unsqueeze(0)  # (1, 2, N, N)
+       grid = grid.unsqueeze(0)  # (1, len(x_new), len(x_new), 2)
+
+       # Use grid_sample for interpolation
+       gnew = torch.nn.functional.grid_sample(g, grid, mode='bicubic', padding_mode='zeros', align_corners=False)
+       return gnew[0]
+
+
+   def _ResampleField2D(self, g, x, x_new):
        if isinstance(x, np.ndarray):
            x = torch.from_numpy(x).float()
        if isinstance(x_new, np.ndarray):
@@ -82,42 +108,97 @@ class TorchFourierOptics:
     Returns:
     - torch.Tensor: Campo en el plano de salida, transformado por la óptica FT.
     """
-    def FFT_prop(self, g, x, x_out, focal_length):
-      M = len(x)
-      assert g[0].shape == (M,M)
-      wavelength = self.params['wavelength']
-      tru_freq_spacing = (x_out[1]-x_out[0])/(focal_length*wavelength) # physical spatial frequency spacing
-      #figure out the amount of padding needed for the FFT to capture the physical spatial frequencies
-      MP = 32  # MP is the total number of points in the padded array (1D)
-      while True:
-         P = MP - M  #  P is the number of zero-pad values
-         if P < 0:
-            MP *=2
-            continue
-         L_pad = (MP/M)*(x.max() - x.min())
-         FFT_spacing = 1/L_pad
-         if tru_freq_spacing/FFT_spacing >=2:
-            break
-         else: MP *= 2
+   def FFT_prop(self, g, x, x_out, focal_length):
+       # Ensure input tensors are on the correct device
+       g = g.to(self.device)
+       x = x.to(self.device)
+       x_out = x_out.to(self.device)
 
-      g_pad = torch.zeros((2,MP,MP))  # create padded array
-      k1 = MP//2 - M//2;  k2 = k1 + M
-      g_pad[0, k1:k2, k1:k2] = g[0]
-      g_pad[1, k1:k2, k1:k2] = g[1]
-      g_pad = torch.complex(g_pad[0],g_pad[1])
-      f_complex = torch.fft.fftshift(torch.fft.fft2(torch.fft.ifftshift(g_pad)))
-      ff = torch.stack((torch.real(f_complex), torch.imag(f_complex)),dim=0)
-      if np.remainder(MP,2) == 0:
-         fft_grid = torch.linspace(-MP//2,MP//2-1,MP)*FFT_spacing
-      else:
-         fft_grid = torch.linspace(-MP//2,MP//2  ,MP)*FFT_spacing
-      #scale the spatial frequency grid back to (output plane) distance units.
-      #Note the conversion of fft_grid back to spatial coordinates refers to the input plane, not the output plane.
-      #  So, if you are focusing a collimated beam you could have fft_grid be much wider than x_out.  This is OK.
-      fft_grid *= focal_length*wavelength
+       M = len(x)
+       assert g[0].shape == (M, M)
+       wavelength = self.params['wavelength']
 
-      f = self.ResampleField2D(ff, fft_grid , x_out)
-      return f
+       # Calculate frequency spacings
+       tru_freq_spacing = (x_out[1] - x_out[0]) / (focal_length * wavelength)
+       MP = 32  # Initial padded length
+
+       # Determine padding required
+       while True:
+           P = MP - M
+           if P < 0:
+               MP *= 2
+               continue
+
+           L_pad = (MP / M) * (x.max() - x.min())
+           FFT_spacing = 1 / L_pad
+           if tru_freq_spacing / FFT_spacing >= 2:
+               break
+           else:
+               MP *= 2
+
+       # Create padded array directly on the device
+       g_pad = torch.zeros((2, MP, MP), device=self.device)
+       k1 = MP // 2 - M // 2
+       k2 = k1 + M
+       g_pad[0, k1:k2, k1:k2] = g[0]
+       g_pad[1, k1:k2, k1:k2] = g[1]
+
+       # Perform FFT on the complex field
+       g_pad = torch.complex(g_pad[0], g_pad[1])
+       f_complex = torch.fft.fftshift(torch.fft.fft2(torch.fft.ifftshift(g_pad)))
+
+       # Stack real and imaginary parts
+       ff = torch.stack((torch.real(f_complex), torch.imag(f_complex)), dim=0)
+
+       # Create FFT grid on the device
+       if MP % 2 == 0:
+           fft_grid = torch.linspace(-MP // 2, MP // 2 - 1, MP, device=self.device) * FFT_spacing
+       else:
+           fft_grid = torch.linspace(-MP // 2, MP // 2, MP, device=self.device) * FFT_spacing
+
+       # Scale the spatial frequency grid
+       fft_grid *= focal_length * wavelength
+
+       # Resample the field to the output grid
+       f = self.ResampleField2D(ff, fft_grid, x_out)
+       return f
+
+    def _FFT_prop(self, g, x, x_out, focal_length):
+         M = len(x)
+         assert g[0].shape == (M,M)
+         wavelength = self.params['wavelength']
+         tru_freq_spacing = (x_out[1]-x_out[0])/(focal_length*wavelength) # physical spatial frequency spacing
+         #figure out the amount of padding needed for the FFT to capture the physical spatial frequencies
+         MP = 32  # MP is the total number of points in the padded array (1D)
+         while True:
+            P = MP - M  #  P is the number of zero-pad values
+            if P < 0:
+               MP *=2
+               continue
+            L_pad = (MP/M)*(x.max() - x.min())
+            FFT_spacing = 1/L_pad
+            if tru_freq_spacing/FFT_spacing >=2:
+               break
+            else: MP *= 2
+
+         g_pad = torch.zeros((2,MP,MP))  # create padded array
+         k1 = MP//2 - M//2;  k2 = k1 + M
+         g_pad[0, k1:k2, k1:k2] = g[0]
+         g_pad[1, k1:k2, k1:k2] = g[1]
+         g_pad = torch.complex(g_pad[0],g_pad[1])
+         f_complex = torch.fft.fftshift(torch.fft.fft2(torch.fft.ifftshift(g_pad)))
+         ff = torch.stack((torch.real(f_complex), torch.imag(f_complex)),dim=0)
+         if np.remainder(MP,2) == 0:
+            fft_grid = torch.linspace(-MP//2,MP//2-1,MP)*FFT_spacing
+         else:
+            fft_grid = torch.linspace(-MP//2,MP//2  ,MP)*FFT_spacing
+         #scale the spatial frequency grid back to (output plane) distance units.
+         #Note the conversion of fft_grid back to spatial coordinates refers to the input plane, not the output plane.
+         #  So, if you are focusing a collimated beam you could have fft_grid be much wider than x_out.  This is OK.
+         fft_grid *= focal_length*wavelength
+
+         f = self.ResampleField2D(ff, fft_grid , x_out)
+         return f
 
 
     #2D Fresenel prop using convolution in the spatial domain
