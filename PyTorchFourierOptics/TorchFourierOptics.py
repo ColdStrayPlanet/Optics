@@ -51,11 +51,22 @@ class TorchFourierOptics:
 
    #This avoids the numpy Poisson random generator when the intensity is too big
    def RobustPoissonRnd(self, I):
-      assert np.isscalar(I)
-      if I <= 1.e4:
-        return np.random.poisson(I)
-      else:
-           return I + torch.sqrt(I)*torch.random.randn().to(self.device)
+     if I.numel() == 1:  # Si I est un scalaire, utiliser Poisson standard
+        if I <= 1.e4:
+            return torch.poisson(I)
+        else:
+            return I + torch.sqrt(I) * torch.randn_like(I)
+     else:  # Appliquer Poisson pour chaque élément si l'intensité est petite
+        poisson_mask = I <= 1.e4
+        poisson_result = torch.poisson(I) * poisson_mask.float()
+
+        # Appliquer l'approximation normale pour les grandes intensités
+        normal_result = I + torch.sqrt(I) * torch.randn_like(I)
+
+        # Combiner les résultats Poisson et normal
+        result = poisson_result + (1 - poisson_mask.float()) * normal_result
+        result = result.to(self.device)
+        return result
 
     #Calculate the intensity given the field g
     #  g must have shape (2, N, M) where g[0] is the real part of the field, and g[1] is the imaginary part
@@ -65,34 +76,63 @@ class TorchFourierOptics:
        h = g[0]**2 + g[1]**2
        return h.unsqueeze(0)  # intensity must have 1 channel
 
-   #This returns the Cramer-Rao bound matrrix and the Fisher Information (FIM), if desired,
-   #  under the assumption that the measurements are Poisson distributed.
-   #If a scalar number, S, is the expected number of counts and the actual number
-   #  of counts, n, is Poisson distributed denoted as P(n|S), we have <n> = s and <n^2> = S^2 + S.
-   #  Let the gradient vector of S w.r.t. some parameters be gs, then 1 page of work shows that
-   #  the Fisher information matrix (FIM) for one experiment is ( 1/(S + rn) )*outer_prod(gs,gs).
-   #  outer_prod(gs,gs) is a singulat matrix, which can be shown by factorization since: (aa ab; ab bb) = (a 0; 0 b)(a b; a b)
-   #Note that the FIMs of independent experiments add.
-   #Then, Cramer-Rao bound is given by inv (FIM)
-   #S - is a vector (or list) of expected count numbers from independent experiments
-   #    this excludes readout noise
-   #Sg - is an array of gradients w.r.t. the parameters to be estimated.
-   #  Sg.shape[0] must equal len(S)
-   #dk - dark current noise level (photon units) - (thermal) dark current counts are Poisson - readout noise is not.
-   #return_FIM - if True, the FIM will be returned, too
-   def CRB_Poisson(self, S, Sg, dk=2.5, return_FIM=False):
-       if len(S) != Sg.shape[0]:
-           raise ValueError("S and Sg must have the same number of items")
-       M = len(S); N = Sg.shape[1]
-       fim = np.zeros((N,N))
+
+
+   def CRB_Poisson(self, S, Sparams, dk=2.5, return_FIM=False):
+       """
+       Compute the Cramer-Rao Bound (CRB) and optionally the Fisher Information Matrix (FIM)
+       using PyTorch's autograd to automatically compute the gradients.
+
+       Args:
+       - S (torch.Tensor): Expected count numbers from independent experiments (this excludes noise, by definition).
+          S must be a differentiable tensor  with respect to Sparams (not anyting else).
+       - Sparams (torch.Tensor): Vector of parameters to be estimated
+          Sparams must be differentiable
+       - dk (float): Dark current noise level (photon units). Default is 2.5.
+       - return_FIM (bool): Whether to return the Fisher Information Matrix (FIM) as well. Default is False.
+
+       Returns:
+       - CRB (torch.Tensor): Cramer-Rao Bound matrix.
+       - FIM (torch.Tensor, optional): Fisher Information Matrix, returned only if `return_FIM=True`.
+       """
+
+       if not S.requires_grad:
+           raise ValueError("S must be a differentiable tensor (requires_grad=True)")
+       if not Sparams.requires_grad:
+           raise ValueError("Sparams must be a differentiable tensor (requires_grad=True)")
+
+       S = S.to(self.device)
+       if S.ndimension() > 1:
+           print(f"Warning: Flattening S from shape {S.shape} to a 1D vector.")
+           S = S.flatten()
+
+       # Number of experiments (M) and number of parameters (N)
+       M = len(S)
+       N = len(Sparams)
+
+       fim = torch.zeros((N, N), dtype=torch.float32)  # Initialize FIM as zero
+
+       # Loop over all experiments to calculate the gradients
        for k in range(M):
-           gg = np.outer( Sg[k,:], Sg[k,:] )
-           fim += ( 1./(S[k] + dk) )*gg
-       crb = np.linalg.inv(fim)
-       if not return_FIM:
-           return crb
+           # Compute the gradient of S[k] with respect to Sparams using autograd
+           Sg = torch.autograd.grad(S[k], Sparams, create_graph=True)[0]
+           if len(Sg) != N:
+              raise ValueError(f"Length of Sg ({len(Sg)}) must be equal to N ({N}).  Sg must be differentiable w.r.t. Sg and nothing else.")
+           # Compute outer product of gradients
+           gg = torch.outer(Sg, Sg)
+           # Update the Fisher Information Matrix
+           fim += (1. / (S[k] + dk)) * gg
+
+       # Calculate the Cramer-Rao Bound as the inverse of the Fisher Information Matrix
+       det_fim = torch.det(fim)
+       if det_fim.abs() < 1e-10:  # Threshold for a singular matrix
+          print("Warning: Fisher Information Matrix is close to singular. Results may not be reliable.")
+       crb = torch.linalg.pinv(fim)
+       if return_FIM:
+           return crb, fim
        else:
-           return (crb, fim)
+           return crb
+
 
 
     #Resample the tensor g on a new grid.  This relies on the robust routine torch.nn.functional.grid_sample.
@@ -265,8 +305,8 @@ class TorchFourierOptics:
     #    the output field should be differentiable with respect to 'g'
     # x - vector of 1D coordinates in initial plane (where g is defined), corresponding to bin center locaitons
     #        it is assumed that the x and y directions have the same sampling.
-    # length_out - length (one side of the square) of region to be calculated in output plane
-    # z - propagation distance
+    # length_out (scalar) - length (one side of the square) of region to be calculated in output plane
+    # z (scalar) - propagation distance
     # index_of_refaction - isotropic index of refraction of medium
     # set_dx = [True | False | dx_new (same units as x)]
     #     True  - forces full sampling of chirp according to self.params['max_chirp_step_deg']
@@ -274,10 +314,30 @@ class TorchFourierOptics:
     #     False -  the grid spacing of the output plane is the same as that of the input plane
     #     dx_new - grid spacing of the output plane
    def ConvFresnel2D(self, g, x, length_out, z, set_dx=True, index_of_refraction=1):
+       if isinstance(x, np.ndarray):
+           x = torch.tensor(x, dtype=torch.float32).to(self.device)
+       if x.ndimension() != 1:
+           raise ValueError(f"x must be a 1D tensor, but got {x.ndimension()} dimensions.")
+       if isinstance(length_out, np.ndarray) or isinstance(length_out, float) or isinstance(length_out, int):  # Vérifier que length_out est un scalaire (tensor avec dimension 0)
+           length_out = torch.tensor(length_out, dtype=torch.float32).to(self.device)
+       if length_out.ndimension() != 0:
+           raise ValueError(f"length_out must be a scalar (0D tensor), but got {length_out.ndimension()} dimensions.")
+       if isinstance(z, np.ndarray) or isinstance(z, float) or isinstance(z, int):  # Vérifier que z est un scalaire (tensor avec dimension 0)
+           z = torch.tensor(z, dtype=torch.float32).to(self.device)
+       if z.ndimension() != 0:
+           raise ValueError(f"z must be a scalar (0D tensor), but got {z.ndimension()} dimensions.")
+
+       x = x.to(self.device)
+       length_out = length_out.to(self.device)
+       z = z.to(self.device)
+
        if g.shape[1] != x.shape[0]:
            raise ValueError("Input field and grid must have the same sampling.")
        if g.shape[1] != g.shape[2]:
            raise ValueError("Input field array must be square.")
+       if not np.isscalar(length_out):
+           raise ValueError("length_out parameter must be a scalar.")
+
 
        # Ensure all tensors are on the correct device
        g = g.to(self.device)
@@ -299,15 +359,17 @@ class TorchFourierOptics:
            if set_dx <= 0:
                raise Exception("ConvFresnel2D: numerical value of set_dx must be > 0.")
            dx_new = set_dx
+           dx_new = torch.tensor(dx_new).to(self.device)
 
        # Resample input field on a grid with spacing dx_new
-       nx_new = int(length_input / dx_new)
+       nx_new = (length_input / dx_new).floor().to(torch.int)
        x_new = torch.linspace(-length_input / 2 + dx_new / 2, length_input / 2 - dx_new / 2, nx_new, device=self.device)
        g, x = self.ResampleField2D(g, x, x_new)
        dx = x[1] - x[0]
 
-       ns = int(torch.round((length_input + length_out) / dx))
-       s = torch.linspace(-length_input / 2 - length_out / 2 + dx / 2, length_input / 2 + length_out / 2 - dx / 2, ns, device=self.device)
+       ns = torch.round( (length_input + length_out)/dx ).floor().to(torch.int)
+       ns = int(ns.item())
+       s = torch.linspace(-length_input/2 - length_out/2 + dx/2, length_input/2 + length_out/2 - dx/2, ns, device=self.device)
        sx, sy = torch.meshgrid(s, s, indexing='xy')
 
        kern = torch.exp(1j * torch.pi * (sx**2 + sy**2) / (lam * z))
@@ -693,11 +755,11 @@ def test_OpticalFT():  # take an optical FT of a disk
 def test_fresnel_propagation():
     # Configurar el campo de entrada
     N = 256  # Resolución del campo de entrada
-    L = 120  # Longitud de lado del campo en micrómetros
+    L = 120.  # Longitud de lado del campo en micrómetros
     x = np.linspace(-L/2, L/2, N)  # Coordenadas en el plano de entrada - campo cuadrado
     X, Y = np.meshgrid(x, x)
     wavelength = 0.9  # Longitud de onda en micrómetros
-    z = 1000  # Distancia de propagación en micrómetros
+    z = 1000.  # Distancia de propagación en micrómetros
     params = {'wavelength': wavelength, 'max_chirp_step_deg': 30.0}
     optics = TorchFourierOptics(params=params)
 
@@ -706,7 +768,8 @@ def test_fresnel_propagation():
     # Convertir el campo de entrada en un tensor de PyTorch complejo (2, N, N)
     g = optics.numpy_complex2torch(input_field)
 
-    output_field, s = optics.ConvFresnel2D(g, torch.from_numpy(x).float(), L, z)
+    #ConvFresnel2D(self, g, x, length_out, z, set_dx=True, index_of_refraction=1)
+    output_field, s = optics.ConvFresnel2D(g, x, L, z)
 
     # Convertir el resultado a un array NumPy complejo
     output_field_np = optics.torch2numpy_complex(output_field)
