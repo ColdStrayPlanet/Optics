@@ -15,6 +15,7 @@ import torch
 example_parameters = {'wavelength': 0.9, 'max_chirp_step_deg':30.0}
 
 
+
 ################## start TorchFourerOptics Class ######################
 class TorchFourierOptics:
    def __init__(self, params=example_parameters, GPU=True):
@@ -25,7 +26,7 @@ class TorchFourierOptics:
            self.device = 'cpu'
            if not torch.cuda.is_available(): print("cuda is not available.  CPU implementation.")
 
-   def numpy_complex2torch(self, npcomplexarray, differentiable=True):
+   def numpy_complex2torch(self, npcomplexarray, differentiable=False):
        # Vérification de l'entrée
        if not np.iscomplexobj(npcomplexarray):
            raise ValueError("L'entrée doit être un tableau NumPy de nombres complexes.")
@@ -49,6 +50,26 @@ class TorchFourierOptics:
        # Retourner la partie réelle et imaginaire combinées en un nombre complexe NumPy
        return real_part + 1j * imag_part
 
+   #This multiplies complex image tensors a and b.  a and b are assumed to have two channels,
+   #  each an N-by-N tensor.
+   #  Channel 0 is the real part and channel 1 is the imaginary part.
+   #  a and b must be on the same device
+   def Multiply2ChannelComplex(self, a, b):
+      if a.device != b.device:
+         raise ValueError(f"The devices for a ({a.device}) and b ({b.device}) must be the same.")
+      if a.ndimension() != 3:
+         raise ValueError(f"a must have 3 dimensions.  It has {a.ndimension()}.")
+      if a.shape[0] != 2:
+         raise ValueError(f"a must have 2 channels.  It has {a.shape[0]}.")
+      if a.shape[0] != b.shape[0] or a.shape[1] != b.shape[1] or a.shape[2] != b.shape[2]:
+         raise ValueError(f"a ({a.shape})and b ({b.shape}) must have the same shape.")
+
+      c = torch.zeros_like(a).to(a.device())
+      c[0] = a[0]*b[0] - a[1]*b[1]
+      c[1] = a[0]*b[1] + a[1]*b[0]
+      return(c)
+
+
    #This avoids the numpy Poisson random generator when the intensity is too big
    def RobustPoissonRnd(self, I):
      if I.numel() == 1:  # Si I est un scalaire, utiliser Poisson standard
@@ -67,6 +88,40 @@ class TorchFourierOptics:
         result = poisson_result + (1 - poisson_mask.float()) * normal_result
         result = result.to(self.device)
         return result
+
+    #Resample the tensor g on a new grid.  This relies on the robust routine torch.nn.functional.grid_sample.
+    # This routine has input arguments: (input, grid, mode='bilinear', padding_mode='zeros', align_corners=None)
+    #   'input' is tensor that is to be interpolated onto a new grid
+    #        It  has dimentions (batch_size, number of channels, height, width) for 2D arrays - there is a depth dimension for 3D
+    #    'grid' is the set of new coordinates, normalized to the [[-1,1],[-1,1]] range.  It has a shape
+    #        (batch_size , output height, output width,2) where the final dimension corresponds to the
+    #     Since it assumed that the input coordinate correspond to the [[-1,1],[-1,1]] grid, x_new needs to scaled as:
+    #         x_torch =  ( 2*x_new - x.max() - x.min() )/(x.max() - x.min())  where x_torch corresponds a 1D coordinate in the grid array
+    #         x and y coords of the new samples
+    #  See the pytorch  docs for more detail
+   def ResampleField2D(self, g, x, x_new):
+       # Convert arrays to torch tensors and move them to the device
+       if isinstance(x, np.ndarray):
+           x = torch.from_numpy(x).float().to(self.device)
+       if isinstance(x_new, np.ndarray):
+           x_new = torch.from_numpy(x_new).float().to(self.device)
+
+       # Ensure input tensor g is on the correct device
+       g = g.to(self.device)
+
+       # Scale and create the grid on the device
+       x_torch = (2 * x_new - x.max() - x.min()) / (x.max() - x.min()).to(self.device)
+       grid_x, grid_y = torch.meshgrid(x_torch, x_torch, indexing='xy')  # ouputs on same device as x_torch
+       grid = torch.stack((grid_x, grid_y), dim=-1)
+
+       # Add batch dimension to g and grid
+       g = g.unsqueeze(0)  # (1, 2, N, N)
+       grid = grid.unsqueeze(0)  # (1, len(x_new), len(x_new), 2)
+
+       # Use grid_sample for interpolation
+       gnew = torch.nn.functional.grid_sample(g, grid, mode='bicubic', padding_mode='zeros', align_corners=False)
+       return gnew[0]
+
 
     #Calculate the intensity given the field g
     #  g must have shape (2, N, M) where g[0] is the real part of the field, and g[1] is the imaginary part
@@ -133,43 +188,6 @@ class TorchFourierOptics:
        else:
            return crb
 
-
-
-    #Resample the tensor g on a new grid.  This relies on the robust routine torch.nn.functional.grid_sample.
-    # This routine has input arguments: (input, grid, mode='bilinear', padding_mode='zeros', align_corners=None)
-    #   'input' is tensor that is to be interpolated onto a new grid
-    #        It  has dimentions (batch_size, number of channels, height, width) for 2D arrays - there is a depth dimension for 3D
-    #    'grid' is the set of new coordinates, normalized to the [[-1,1],[-1,1]] range.  It has a shape
-    #        (batch_size , output height, output width,2) where the final dimension corresponds to the
-    #     Since it assumed that the input coordinate correspond to the [[-1,1],[-1,1]] grid, x_new needs to scaled as:
-    #         x_torch =  ( 2*x_new - x.max() - x.min() )/(x.max() - x.min())  where x_torch corresponds a 1D coordinate in the grid array
-    #         x and y coords of the new samples
-    #  See the pytorch  docs for more detail
-   def ResampleField2D(self, g, x, x_new):
-       # Convert arrays to torch tensors and move them to the device
-       if isinstance(x, np.ndarray):
-           x = torch.from_numpy(x).float().to(self.device)
-       if isinstance(x_new, np.ndarray):
-           x_new = torch.from_numpy(x_new).float().to(self.device)
-
-       # Ensure input tensor g is on the correct device
-       g = g.to(self.device)
-
-       # Scale and create the grid on the device
-       x_torch = (2 * x_new - x.max() - x.min()) / (x.max() - x.min()).to(self.device)
-       grid_x, grid_y = torch.meshgrid(x_torch, x_torch, indexing='xy')  # ouputs on same device as x_torch
-       grid = torch.stack((grid_x, grid_y), dim=-1)
-
-       # Add batch dimension to g and grid
-       g = g.unsqueeze(0)  # (1, 2, N, N)
-       grid = grid.unsqueeze(0)  # (1, len(x_new), len(x_new), 2)
-
-       # Use grid_sample for interpolation
-       gnew = torch.nn.functional.grid_sample(g, grid, mode='bicubic', padding_mode='zeros', align_corners=False)
-       return gnew[0]
-
-
-
    """
     Simula una óptica perfecta de transformada de Fourier usando la propagación FFT.
 
@@ -178,6 +196,9 @@ class TorchFourierOptics:
     - x (torch.Tensor): Coordenadas 1D del grid en el plano de entrada, en micrómetros, de tamaño (N,).
     - x_out (torch.Tensor): Coordenadas 1D del grid en el plano de salida, en micrómetros.
     - focal_length (float): Distancia focal del sistema óptico en micrómetros.
+    - dist_in_front corresponds to "d" in Fig. 5.5 and Eq. 5-19 in Intro to Fourier Optics by Goodman.
+        - None  execute a perfect Fourier Transfor
+        - d (must be > 0) apply the phase factor in Eq. 5-19.
 
     Let L = max(x) - min(x), and M be the number of points in the array, padded to have length M+P.
       Define L' = L((M+P)/M). The frequency corresponding to point m in the FFT is m/L' = (m/L)(M/(M+P))
@@ -189,11 +210,21 @@ class TorchFourierOptics:
     Returns:
     - torch.Tensor: Campo en el plano de salida, transformado por la óptica FT.
     """
-   def FFT_prop(self, g, x, x_out, focal_length):
+   def FFT_prop(self, g, x, x_out, focal_length, dist_in_front=None):
        # Ensure input tensors are on the correct device
+       if focal_length <= 0. :
+          raise ValueError(f"focal_length must be > 0. Got {focal_length}.")
+       if x_out.ndimension() != 1:
+          raise ValueError("x_out must have 1 dimension.  Got {x_out.ndimension()}.")
+       if x.ndimension() != 1:
+             raise ValueError("x must have 1 dimension.  Got {x.ndimension()}.")
+       if g.ndimension() != 3:
+             raise ValueError("g must have 3 dimensions.  g has shape {g.shape}")
+
        g = g.to(self.device)
        x = x.to(self.device)
        x_out = x_out.to(self.device)
+
 
        M = len(x)
        assert g[0].shape == (M, M)
@@ -242,7 +273,19 @@ class TorchFourierOptics:
 
        # Resample the field to the output grid
        f = self.ResampleField2D(ff, fft_grid, x_out)
+
+       if dist_in_front is not None:  # apply phase factor in Eq. 5-19 of Goodman
+          if dist_in_front <= 0:
+             raise ValueError(f"dist_in_front must be > 0. Got {dist_in_front} ")
+          X,Y = torch.meshgrid(x_out, x_out)
+          pf = torch.exp(1j*(torch.pi/(self.wavelength*focal_length))*( (1. - dist_in_front/focal_length)*(X*X + Y*Y)  ))
+          f_complex = torch.complex(f[0], f[1])
+          f_new = f_complex * pf
+          # Rebuild the output signal as a two-channel tensor
+          f = torch.stack((f_new.real, f_new.imag), dim=0)
+
        return f
+
 
 
     #2D Fresenel prop using convolution in the spatial domain
@@ -364,9 +407,6 @@ class TorchFourierOptics:
 
        return (h / (lam * z), s)
 
-
-
-
     #Apply the thin lens phase transformation
     #g - two channel input field (each channel is 2D)
     #x - 1D coordinates: len(x) = g.shape[0]=g.shape[1]
@@ -424,12 +464,8 @@ class TorchFourierOptics:
        # Apply the thin lens phase factor
        phase_factor = torch.exp(-1j * torch.pi * (X**2 + Y**2) / (wavelength * focal_length))
 
-       # Separate real and imaginary parts of g
-       g_real = g[0]
-       g_imag = g[1]
-
        # Create complex field from real and imaginary parts
-       g_complex = torch.complex(g_real, g_imag)
+       g_complex = torch.complex(g[0], g[1])
 
        # Apply the phase transformation
        g_transformed = g_complex * phase_factor
@@ -506,6 +542,41 @@ class TorchFourierOptics:
 
        return h
 
+   """
+   This function multiplies the field by a complex-valued transmission screen.
+   It resamples the screen, specified by ComplexScreen_np (the transmission fcn)
+     and x_screen_np (the 1D x-coordinate), so it can multiply the field on a
+     pixel-by-pixel basis.  It is the screen that is resampled onto the grid
+     specified by x, and the field, g, is
+
+   g - (torch tensor) two-channel complex-valued electric field, each channel is N-by-N
+   x - (torch tensor) 1D spatial coordinate corresponding to g.  Must have N elements
+   ComplexScreen_np - (2D np.array) of complex values
+   x_screen_np - (1D np.array) the 1D spatial coordinate corresponding to ComplexScreen_np
+      x_screen_np must cover the expanse of x.
+      So, min(x_screen_np) <= min(x) and max(x_screen_np) >= max(x)
+
+   """
+   def ApplyTransmissionScreen(self, g, x, ComplexScreen_np, x_screen_np):
+      if not isinstance(ComplexScreen_np, np.ndarray):
+         raise ValueError(f"ComplexScreen_np should be an np.ndarray.  Got {type(ComplexScreen_np)}.")
+      if not np.iscomplexobj(ComplexScreen_np):
+         raise ValueError("ComplexScreen_np needs to be complex-valued.")
+
+      xs = torch.tensor(x_screen_np).to(self.device)
+      if xs.ndimension() != 1:
+         raise ValueError(f"x_screen_np must be a 1D tensor, but got {x.ndimension()} dimensions.")
+      if torch.min(xs) > torch.min(x) or torch.max(xs) < torch.max(x):
+         print("min x=", torch.min(x), "max x=",torch.max(x), "min x_screen_np=", x_screen_np.min(), "max x_screen_np=", x_screen_np.max())
+         raise ValueError("x_screen_np must cover of the expanse of x.")
+
+      scr = self.numpy_complex2torch(ComplexScreen_np, differentiable=False)
+      scr = self.ResampleField2D(scr, xs, x)
+      g = self.Multiply2ChannelComplex(g, scr)
+      return(g)
+
+
+
 
 ################## end TorchFourerOptics Class ######################
 
@@ -565,7 +636,7 @@ def test_fresnel_propagation():
     # Crear un campo de entrada cuadrado uniforme (por simplicidad)
     input_field = np.ones((N, N), dtype=np.complex64)
     # Convertir el campo de entrada en un tensor de PyTorch complejo (2, N, N)
-    g = Optics.numpy_complex2torch(input_field)
+    g = Optics.numpy_complex2torch(input_field, False)
 
     #ConvFresnel2D(self, g, x, length_out, z, set_dx=True, index_of_refraction=1)  #  from the function definition
     output_field, s = Optics.ConvFresnel2D(g, x, L, z)
