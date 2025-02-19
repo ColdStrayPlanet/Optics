@@ -69,6 +69,20 @@ class TorchFourierOptics:
       c[1] = a[0]*b[1] + a[1]*b[0]
       return(c)
 
+   #This takes the two-channel torch tensor, g, and makes and image
+   #g - two channel torch tensor to be imaged
+   #x - 1D spatial coordinate
+   #offset - additive constant in the log10 function
+   #return_field - True if you want g in the form of a complex-valued  np.array
+   def MakeLogAmpImage(self, g, x, offset=1., return_field=False):
+      gnp = self.torch2numpy_complex(g)
+      ext = (x.min().item(), x.max().item(), x.min().item(), x.max().item())
+      plt.figure(); plt.imshow(np.log10(offset + np.abs(gnp)), extent=ext, origin='lower', cmap='seismic');
+      plt.colorbar();
+      if return_field:
+         return gnp
+      else:
+         return None
 
    #This avoids the numpy Poisson random generator when the intensity is too big
    def RobustPoissonRnd(self, I):
@@ -220,14 +234,16 @@ class TorchFourierOptics:
              raise ValueError("x must have 1 dimension.  Got {x.ndimension()}.")
        if g.ndimension() != 3:
              raise ValueError("g must have 3 dimensions.  g has shape {g.shape}")
+       M = len(x)
+       if  g[0].shape != (M, M):
+          raise ValueError(f"g has shape {g.shape}, x has shape {x.shape}. Dims 1 and 2 of g must be same as x.")
 
        g = g.to(self.device)
        x = x.to(self.device)
        x_out = x_out.to(self.device)
 
 
-       M = len(x)
-       assert g[0].shape == (M, M)
+       
        wavelength = self.params['wavelength']
 
        # Calculate frequency spacings
@@ -277,8 +293,12 @@ class TorchFourierOptics:
        if dist_in_front is not None:  # apply phase factor in Eq. 5-19 of Goodman
           if dist_in_front <= 0:
              raise ValueError(f"dist_in_front must be > 0. Got {dist_in_front} ")
-          X,Y = torch.meshgrid(x_out, x_out)
-          pf = torch.exp(1j*(torch.pi/(self.wavelength*focal_length))*( (1. - dist_in_front/focal_length)*(X*X + Y*Y)  ))
+          # check for reasonable sampling of the phase factor
+          deltaphase  = (x_out[1] - x_out[0])*(np.pi/wavelength/focal_length)*(1. - dist_in_front/focal_length)*2*x_out.max()
+          if deltaphase > (self.params['max_chirp_step_deg']*np.pi/180):
+             print(f"Warning (FFT_prop):The provided x_out vector corresponds to a maximum phase step of {deltaphase} rad.  The recommended maximum phase step is {self.params['max_chirp_step_deg']*np.pi/180} rad.")
+          X,Y = torch.meshgrid(x_out, x_out, indexing='xy')
+          pf = (-1j)*torch.exp(1j*(torch.pi/(wavelength*focal_length))*( (1. - dist_in_front/focal_length)*(X*X + Y*Y)  ))
           f_complex = torch.complex(f[0], f[1])
           f_new = f_complex * pf
           # Rebuild the output signal as a two-channel tensor
@@ -510,7 +530,7 @@ class TorchFourierOptics:
        g = g.to(self.device)
        x = x.to(self.device)
 
-       X, Y = torch.meshgrid(x,x,indexing='xy', device=self.device)
+       X, Y = torch.meshgrid(x,x,indexing='xy')
        if shape == 'circle':
            r = torch.sqrt(X**2 + Y**2)
        elif shape == 'square':
@@ -596,7 +616,7 @@ def test_OpticalFT():  # take an optical FT of a disk
    d_out = 40*fld;  dx_out = fld/3; N_out = int(d_out//dx_out)
    x_out = torch.linspace(-d_out/2 + d_out/(2*N_out), d_out/2 - d_out/(2*N_out) ,N_out).to(Optics.device)
 
-   X,Y = torch.meshgrid(x_in, x_in, indexing='ij')  # OK on cpu
+   X,Y = torch.meshgrid(x_in, x_in, indexing='xy')  # OK on cpu
    R = torch.sqrt(X**2 + Y**2)  # OK on cpu
    circ = torch.ones_like(Y).to(Optics.device)
    circ[R > d_circ/2] = 0.
