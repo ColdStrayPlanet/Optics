@@ -11,6 +11,7 @@ This creates a model of square stellar coronagraph for my JATIS article for
 
 """
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import TorchFourierOptics as TFO
 
@@ -54,3 +55,14 @@ g = F.ApplyStopAndOrAperture(g, x1 , 142., d_ap=2250., shape='square', smoothing
 # Take an optical FT to arrive at the Lyot stop
 L2 = 8.192e3; dx2 = 16.; x2 =  torch.linspace(-L2/2 + dx2/2, L2/2 - dx2/2 , int(L2//dx2)).to(device)
 g = F.FFT_prop(g,x1,x2, 0.4e6, None)
+#apply Lyot Stop
+g = F.ApplyStopAndOrAperture(g,x2,-1., d_ap=7.9e3   , shape='square', smoothing_distance=150.)
+F.MakeAmplitudeImage(g,x2,'linear');plt.title("just after Lyot stop");
+#gnp_Lyot = F.torch2numpy_complex(g)
+
+# Take an optical FT to arrive at the detector
+NN3 = 512
+L3 = 2200.; dx3 = L3/NN3; x3 = torch.linspace(-L3/2 + dx3/2, L3/2 - dx3/2, NN3)
+g = F.FFT_prop(g,x2,x3,4.e5, dist_in_front=1.e5)
+F.MakeAmplitudeImage(g,x3,'linear'); plt.title('detector plane');
+#gnp_det = F.torch2numpy_complex(g)

@@ -70,17 +70,20 @@ class TorchFourierOptics:
       return(c)
 
    #This takes the two-channel torch tensor, g, and makes an image of |g|
-   #g - two channel torch tensor to be imaged
+   #g - two channel torch tensor - or 2D complex np.array - to be imaged
    #x - 1D spatial coordinate
    #type - 'log10' or 'linear' - specify the type of scaling of the amplitude
    #offset - additive constant in the log10 function (does nothing in the linear scale)
    #return_field - True if you want g in the form of a complex-valued  np.array
    def MakeAmplitudeImage(self, g, x, type='log10', offset=1., return_field=False):
       assert type in ['log10','linear']
-      gnp = self.torch2numpy_complex(g)
-      if type == 'log10':
-         famp = lambda f : np.abs(f)
+      if isinstance(g, np.ndarray):
+         gnp = g
+      else:
+         gnp = self.torch2numpy_complex(g)
       if type == 'linear':
+         famp = lambda f : np.abs(f)
+      if type == 'log10':
          famp = lambda f : np.log10(offset + np.abs(f))
       ext = (x.min().item(), x.max().item(), x.min().item(), x.max().item())
       plt.figure(); plt.imshow(famp(gnp), extent=ext, origin='lower', cmap='seismic');
@@ -249,7 +252,7 @@ class TorchFourierOptics:
        x_out = x_out.to(self.device)
 
 
-       
+
        wavelength = self.params['wavelength']
 
        # Calculate frequency spacings
