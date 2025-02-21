@@ -69,15 +69,21 @@ class TorchFourierOptics:
       c[1] = a[0]*b[1] + a[1]*b[0]
       return(c)
 
-   #This takes the two-channel torch tensor, g, and makes and image
+   #This takes the two-channel torch tensor, g, and makes an image of |g|
    #g - two channel torch tensor to be imaged
    #x - 1D spatial coordinate
-   #offset - additive constant in the log10 function
+   #type - 'log10' or 'linear' - specify the type of scaling of the amplitude
+   #offset - additive constant in the log10 function (does nothing in the linear scale)
    #return_field - True if you want g in the form of a complex-valued  np.array
-   def MakeLogAmpImage(self, g, x, offset=1., return_field=False):
+   def MakeAmplitudeImage(self, g, x, type='log10', offset=1., return_field=False):
+      assert type in ['log10','linear']
       gnp = self.torch2numpy_complex(g)
+      if type == 'log10':
+         famp = lambda f : np.abs(f)
+      if type == 'linear':
+         famp = lambda f : np.log10(offset + np.abs(f))
       ext = (x.min().item(), x.max().item(), x.min().item(), x.max().item())
-      plt.figure(); plt.imshow(np.log10(offset + np.abs(gnp)), extent=ext, origin='lower', cmap='seismic');
+      plt.figure(); plt.imshow(famp(gnp), extent=ext, origin='lower', cmap='seismic');
       plt.colorbar();
       if return_field:
          return gnp
