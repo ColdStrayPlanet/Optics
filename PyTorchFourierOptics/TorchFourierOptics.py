@@ -17,8 +17,9 @@ example_parameters = {'wavelength': 0.9, 'max_chirp_step_deg':30.0}
 
 
 ################## start TorchFourerOptics Class ######################
-class TorchFourierOptics:
+class TorchFourierOptics(torch.nn.Module):  # needs this parent class to preserve gradients
    def __init__(self, params=example_parameters, GPU=True):
+        super().__init__()
         self.params = params
         if GPU and torch.cuda.is_available():
            self.device = 'cuda'
