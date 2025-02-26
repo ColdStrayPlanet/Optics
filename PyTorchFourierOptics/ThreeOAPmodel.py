@@ -11,6 +11,7 @@ This creates a model of square stellar coronagraph for my JATIS article for
 
 """
 import numpy as np
+import matplotlib.pyplot as plt
 from sys import path
 from os.path import isfile
 import torch
@@ -19,7 +20,7 @@ splinetoolsloc = "../"
 path.append(splinetoolsloc)
 import Bspline3 as BS
 
-GPU = False  #run on the GPU?
+GPU = True  #run on the GPU?
 screentype = 'spline'
 sz = 65  # phase/amp screen will be sz-by-sz
 if GPU and torch.cuda.is_available():
@@ -35,15 +36,22 @@ F = TFO.TorchFourierOptics(params=theseparameters, GPU=GPU)
 spco = torch.stack([  #two channel vector representing the spline coefficients
          torch.ones((sz*sz,), device=device), torch.zeros((sz*sz,), device=device)])
 crap = spco.requires_grad_(); del crap  # make spco differentiable
+#%%
 
-
-def OAP_Model(spco, screentype=screentype):  # spco is a set of 1D coefficients that specify the complex screen
+#This is the differentiable OAP model function
+#spco - 2 channel, 1D vector (i.e., flattened) of coefficients specifying either the square pixels or spline coefficients in the screen
+#slice_indices - specifies the spatial indices of the output tensor (corresponding to the image plane) to be returned.
+#   This may be desirable due to the time involved in calculating the gradient with respect to the input tenstor (spco)  
+#    It is a list, tuple or array with 4 elements.  The spatial indices will be used as: output[:, si[0]:si[1], si[2]:si[3]]  (see code)
+def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set of 1D coefficients that specify the complex screen
+   if slice_indices is not None:
+       if len(slice_indices) != 4:
+           raise ValueError("The parameter slice_indices must consist of 4 numbers.")
    if screentype not in ['spline','pixels']:
       raise ValueError("screentype must be 'pixels' or 'spline'.")
    L0 = 20.515e3; dx0 = L0/sz;   #set up initial 1D coordinate
    x0 = torch.linspace( - L0/2 + dx0/2, L0/2 - dx0/2, sz).to(device)  # units are microns
    x0np =  np.linspace( - L0/2 , L0/2 , 3*sz)
-
    #set up initial screen
    if screentype == 'pixels':
       pts = torch.stack([spco[0].reshape((sz,sz)),
@@ -54,6 +62,7 @@ def OAP_Model(spco, screentype=screentype):  # spco is a set of 1D coefficients 
       if isfile(filename):
          spmat = np.load(filename)
       else:
+         #the numpy operation below can cause an OpenMP conflict on some installations
          Spl = BS.BivariateCubicSpline(x0np.flatten(),y0np.flatten(),sz)
          spmat = Spl.mat
          np.save(filename,spmat)
@@ -61,27 +70,29 @@ def OAP_Model(spco, screentype=screentype):  # spco is a set of 1D coefficients 
       pts = torch.stack([
          (spmat@spco[0]).reshape((len(x0np),len(x0np))),
          (spmat@spco[1]).reshape((len(x0np),len(x0np))) ])
+      del spmat; torch.cuda.empty_cache()  # free this memory!
       x0 = torch.tensor(x0np).to(device)
    # resample pts to high res
+
    sz1 = 512
    dx01 = L0/sz1; x01 = torch.linspace( - L0/2 + dx01/2, L0/2 - dx01/2, sz1).to(device)
    g = F.ResampleField2D(pts,x0,x01)
    #create the soft edge on the plane wave source in VLF
    g = F.ApplyStopAndOrAperture(g, x01 ,-1. , d_ap=L0, shape='square', smoothing_distance=1210.)
 
-
    #now propagate to the occulter plane
-   L1 = 2250.; dx1 = 4; x1 = torch.linspace(-L1/2 + dx1/2, L1/2 - dx1/2 , int(L1//dx1)).to(device)
+   L1 = 2250.; dx1 = 8; x1 = torch.linspace(-L1/2 + dx1/2, L1/2 - dx1/2 , int(L1//dx1)).to(device)
    g = F.FFT_prop(g,x01,x1, 0.8e6, dist_in_front=8.5e4)
-
+   
    #apply stop and aperture in occulter plane
    g = F.ApplyStopAndOrAperture(g, x1 , 142., d_ap=2250., shape='square', smoothing_distance=71.)
 
    # Take an optical FT to arrive at the Lyot stop
-   L2 = 8.192e3; dx2 = 16.; x2 =  torch.linspace(-L2/2 + dx2/2, L2/2 - dx2/2 , int(L2//dx2)).to(device)
+   L2 = 8.192e3; dx2 = 32.; x2 =  torch.linspace(-L2/2 + dx2/2, L2/2 - dx2/2 , int(L2//dx2)).to(device)
    g = F.FFT_prop(g,x1,x2, 0.4e6, None)
    #apply Lyot Stop
    g = F.ApplyStopAndOrAperture(g,x2,-1., d_ap=7.9e3   , shape='square', smoothing_distance=150.)
+   #the numpy operation below can cause an OpenMP conflict on some installations
    #F.MakeAmplitudeImage(g,x2,'linear');plt.title("just after Lyot stop");
    #gnp_Lyot = F.torch2numpy_complex(g)
 
@@ -89,10 +100,18 @@ def OAP_Model(spco, screentype=screentype):  # spco is a set of 1D coefficients 
    NN3 = 512
    L3 = 2200.; dx3 = L3/NN3; x3 = torch.linspace(-L3/2 + dx3/2, L3/2 - dx3/2, NN3)
    g = F.FFT_prop(g,x2,x3,4.e5, dist_in_front=1.e5)
+   #the numpy operation below can cause an OpenMP conflict on some installations
    #F.MakeAmplitudeImage(g,x3,'linear'); plt.title('detector plane');
    #gnp_det = F.torch2numpy_complex(g)
-
-   return g[0,256:266,256:266]
+   
+   #scale g to Virtual Lab Fusion amplitudes for the same optical system
+   g /= 1.3e10
+   if slice_indices is None:
+       return g
+   else: 
+       si = slice_indices
+       return g[:,si[0]:si[1], si[2]:si[3]]
 #%%
-#Jacobian
-Jg = torch.autograd.functional.jacobian(OAP_Model, spco)
+
+#This routine pieces together the Jacobian, one part of the output plane
+#  at a time, if need be.  It uses the command jac = torch.autograd.functional.jacobian(OAP_Model, spco)
