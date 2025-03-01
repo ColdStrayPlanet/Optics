@@ -14,6 +14,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sys import path
 from os.path import isfile
+import time
 import torch
 import TorchFourierOptics as TFO
 splinetoolsloc = "../"
@@ -41,8 +42,9 @@ crap = spco.requires_grad_(); del crap  # make spco differentiable
 #This is the differentiable OAP model function
 #spco - 2 channel, 1D vector (i.e., flattened) of coefficients specifying either the square pixels or spline coefficients in the screen
 #slice_indices - specifies the spatial indices of the output tensor (corresponding to the image plane) to be returned.
-#   This may be desirable due to the time involved in calculating the gradient with respect to the input tenstor (spco)  
+#   This may be desirable when calculating the gradient with respect to the input tenstor (spco)  
 #    It is a list, tuple or array with 4 elements.  The spatial indices will be used as: output[:, si[0]:si[1], si[2]:si[3]]  (see code)
+#  if None - no slicing is applied and full spatial extent is returnd.
 def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set of 1D coefficients that specify the complex screen
    if slice_indices is not None:
        if len(slice_indices) != 4:
@@ -97,6 +99,7 @@ def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set
    #gnp_Lyot = F.torch2numpy_complex(g)
 
    # Take an optical FT to arrive at the detector
+   #    Evaluating the FT in non-centered tile of the image plane would require some more work
    NN3 = 512
    L3 = 2200.; dx3 = L3/NN3; x3 = torch.linspace(-L3/2 + dx3/2, L3/2 - dx3/2, NN3)
    g = F.FFT_prop(g,x2,x3,4.e5, dist_in_front=1.e5)
@@ -112,6 +115,71 @@ def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set
        si = slice_indices
        return g[:,si[0]:si[1], si[2]:si[3]]
 #%%
+mmodel = lambda spco: OAP_Model(spco, slice_indices=[110,130,60,80])
+jac = torch.autograd.functional.jacobian(mmodel, spco)
+#%%
+#This routine pieces together the Jacobian, one tile in the output plane at a time.
+#It uses the command jac = torch.autograd.functional.jacobian(OAP_Model, spco)
+# nT - The number of 1D spatial segments for the tiling.  The number of tiles will be nT*nT
+# spco - input tensor specifying the point at which the gradient will be evaluated.
+#    if the system is linear in spco, the value of its elements should not matter
+def BuildJacobianViaTiles(nT, spco=spco):
+    #first get the size of the output field and time it
+    tt = time.time()
+    g = OAP_Model(spco, slice_indices=None, screentype=screentype)
+    print("Time to run model without gradient:", (time.time() - tt), "seconds")
+    print(f"field tensor shape: {g.shape}.  The spatial dimension is {g[0].shape}.")
+    if g.shape[1] != g.shape[2]:
+        raise Exception("The spatial dimensions must be square.")
+    npix = g.shape[1]
+    rem = np.remainder(npix,nT)
+    if rem != 0:
+        raise Exception(f"The spatial dimension {g.shape[1]} needs to be divisible by input parameter nT {nT}.")
+    nnp = int(npix/nT)
+    sd = [0, 0, 0, 0]  # slice indices
+    
+    #build up the jacobian.  
+    jacReRe = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the real of g w.r.t the real part of spco
+    jacReIm = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the real of g w.r.t the imag part of spco
+    jacImRe = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the imag of g w.r.t the real part of spco
+    jacImIm = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the imag of g w.r.t the imag part of spco
+    
+    del g;  torch.cuda.empty_cache()
+    
+    #in this loop, liljac is the jacobian for one tile.  It is 5D:
+    #   dim 0 = real [0] or image [1]  part of gradient
+    #   dim 1 = y spatial dimension 
+    #   dim 2 = x spatial dimension
+    #   dim 3 = real [0] or imag [1] part of spco
+    #   dim 4 = 1D spatial index of spco (spco is spatially flattened)
+    for kx in range(nT):
+        tt = time.time()
+        sd[2] = nnp*kx ; sd[3] = sd[2] + nnp
+        for ky in range(nT):
+          tt = time.time()
+          sd[0] = nnp*ky ; sd[1] = sd[0] + nnp  
+          mmodel = lambda spco: OAP_Model(spco, slice_indices=sd)
 
-#This routine pieces together the Jacobian, one part of the output plane
-#  at a time, if need be.  It uses the command jac = torch.autograd.functional.jacobian(OAP_Model, spco)
+          liljac = torch.autograd.functional.jacobian(mmodel, spco)
+
+          jacReRe[sd[0]:sd[1], sd[2]:sd[3]] =  liljac[0,:,:,0,:]
+          jacReIm[sd[0]:sd[1], sd[2]:sd[3]] =  liljac[0,:,:,1,:]
+          jacImRe[sd[0]:sd[1], sd[2]:sd[3]] =  liljac[1,:,:,0,:]
+          jacImIm[sd[0]:sd[1], sd[2]:sd[3]] =  liljac[1,:,:,1,:]
+
+          if kx == 0 and ky == 0: print(f"time per tile is {time.time()-tt} seconds") 
+          
+    return jac
+
+
+
+
+
+
+
+
+
+
+
+
+
