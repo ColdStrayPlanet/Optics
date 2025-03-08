@@ -15,6 +15,31 @@ import torch
 example_parameters = {'wavelength': 0.9, 'max_chirp_step_deg':30.0}
 
 
+def numpy_complex2torch(npcomplexarray, differentiable=False, device='cpu'):
+    # Vérification de l'entrée
+    if not np.iscomplexobj(npcomplexarray):
+        raise ValueError("L'entrée doit être un tableau NumPy de nombres complexes.")
+
+    # Conversion des parties réelle et imaginaire du tableau complexe
+    real_part = torch.from_numpy(npcomplexarray.real).float().to(device)
+    imag_part = torch.from_numpy(npcomplexarray.imag).float().to(device)
+    sortie = torch.stack((real_part, imag_part), dim=0)
+    if differentiable:
+       sortie.requires_grad = True
+    return sortie
+
+def torch2numpy_complex(inputTensor):
+    if inputTensor.shape[0] != 2:
+        raise ValueError("Le tenseur d'entrée doit avoir la forme (2, N, N).")
+
+    # Détacher le tensor si nécessaire pour éviter de maintenir le graphe de calcul
+    real_part = inputTensor[0].detach().cpu().numpy()
+    imag_part = inputTensor[1].detach().cpu().numpy()
+
+    # Retourner la partie réelle et imaginaire combinées en un nombre complexe NumPy
+    return real_part + 1j * imag_part
+
+
 
 ################## start TorchFourerOptics Class ######################
 class TorchFourierOptics(torch.nn.Module):  # needs this parent class to preserve gradients
@@ -28,28 +53,11 @@ class TorchFourierOptics(torch.nn.Module):  # needs this parent class to preserv
            if not torch.cuda.is_available(): print("cuda is not available.  CPU implementation.")
 
    def numpy_complex2torch(self, npcomplexarray, differentiable=False):
-       # Vérification de l'entrée
-       if not np.iscomplexobj(npcomplexarray):
-           raise ValueError("L'entrée doit être un tableau NumPy de nombres complexes.")
-
-       # Conversion des parties réelle et imaginaire du tableau complexe
-       real_part = torch.from_numpy(npcomplexarray.real).float().to(self.device)
-       imag_part = torch.from_numpy(npcomplexarray.imag).float().to(self.device)
-       sortie = torch.stack((real_part, imag_part), dim=0)
-       if differentiable:
-          sortie.requires_grad = True
-       return sortie
-
+       return numpy_complex2torch(npcomplexarray, differentiable=False, device=self.device)
+   
    def torch2numpy_complex(self, inputTensor):
-       if inputTensor.shape[0] != 2:
-           raise ValueError("Le tenseur d'entrée doit avoir la forme (2, N, N).")
+       return torch2numpy_complex(inputTensor)
 
-       # Détacher le tensor si nécessaire pour éviter de maintenir le graphe de calcul
-       real_part = inputTensor[0].detach().cpu().numpy()
-       imag_part = inputTensor[1].detach().cpu().numpy()
-
-       # Retourner la partie réelle et imaginaire combinées en un nombre complexe NumPy
-       return real_part + 1j * imag_part
 
    #This multiplies complex image tensors a and b.  a and b are assumed to have two channels,
    #  each an N-by-N tensor.

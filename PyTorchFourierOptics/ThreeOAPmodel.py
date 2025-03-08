@@ -100,7 +100,7 @@ def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set
 
    # Take an optical FT to arrive at the detector
    #    Evaluating the FT in non-centered tile of the image plane would require some more work
-   NN3 = 512
+   NN3 = 256
    L3 = 2200.; dx3 = L3/NN3; x3 = torch.linspace(-L3/2 + dx3/2, L3/2 - dx3/2, NN3)
    g = F.FFT_prop(g,x2,x3,4.e5, dist_in_front=1.e5)
    #the numpy operation below can cause an OpenMP conflict on some installations
@@ -114,9 +114,11 @@ def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set
    else: 
        si = slice_indices
        return g[:,si[0]:si[1], si[2]:si[3]]
-#%%
-mmodel = lambda spco: OAP_Model(spco, slice_indices=[110,130,60,80])
-jac = torch.autograd.functional.jacobian(mmodel, spco)
+   
+##%%   this could be too big.  See the BuildJacobianViaTiles function below
+#mmodel = lambda spco: OAP_Model(spco, slice_indices=[110,130,60,80])
+#jac = torch.autograd.functional.jacobian(mmodel, spco)
+
 #%%
 #This routine pieces together the Jacobian, one tile in the output plane at a time.
 #It uses the command jac = torch.autograd.functional.jacobian(OAP_Model, spco)
@@ -124,7 +126,7 @@ jac = torch.autograd.functional.jacobian(mmodel, spco)
 # spco - input tensor specifying the point at which the gradient will be evaluated.
 #    if the system is linear in spco, the value of its elements should not matter
 def BuildJacobianViaTiles(nT, spco=spco):
-    #first get the size of the output field and time it
+    #first get the size of the output field and time it    
     tt = time.time()
     g = OAP_Model(spco, slice_indices=None, screentype=screentype)
     print("Time to run model without gradient:", (time.time() - tt), "seconds")
@@ -143,7 +145,7 @@ def BuildJacobianViaTiles(nT, spco=spco):
     jacReIm = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the real of g w.r.t the imag part of spco
     jacImRe = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the imag of g w.r.t the real part of spco
     jacImIm = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the imag of g w.r.t the imag part of spco
-    
+
     del g;  torch.cuda.empty_cache()
     
     #in this loop, liljac is the jacobian for one tile.  It is 5D:
@@ -156,30 +158,60 @@ def BuildJacobianViaTiles(nT, spco=spco):
         tt = time.time()
         sd[2] = nnp*kx ; sd[3] = sd[2] + nnp
         for ky in range(nT):
-          tt = time.time()
           sd[0] = nnp*ky ; sd[1] = sd[0] + nnp  
           mmodel = lambda spco: OAP_Model(spco, slice_indices=sd)
 
           liljac = torch.autograd.functional.jacobian(mmodel, spco)
 
+
+          #The Cauchy-Riemann conditions imply jacReRe = JacImIm and jacReIm = - jacImRe
+          #   so jac_complex = jacReRe + j*JacImRe  consider the linear function u = a*v (all three are complex nums) and then du_r/dv_r, etc.
           jacReRe[sd[0]:sd[1], sd[2]:sd[3]] =  liljac[0,:,:,0,:]
           jacReIm[sd[0]:sd[1], sd[2]:sd[3]] =  liljac[0,:,:,1,:]
           jacImRe[sd[0]:sd[1], sd[2]:sd[3]] =  liljac[1,:,:,0,:]
           jacImIm[sd[0]:sd[1], sd[2]:sd[3]] =  liljac[1,:,:,1,:]
 
-          if kx == 0 and ky == 0: print(f"time per tile is {time.time()-tt} seconds") 
-          
-    return jac
+          if kx == 0 and ky == 3: print(f"time per tile is {(time.time()-tt)/3} seconds")
+          if ky == nT-1: print(f"column {kx} time = {time.time()-tt} s. There are {nT} columns.")
+    jacReRe_np = jacReRe.numpy()
+    jacReIm_np = jacReIm.numpy()
+    jacImIm_np = jacImIm.numpy()
+    jacImRe_np = jacImRe.numpy()
+              
+    return  ( jacReRe_np, jacReIm_np, jacImRe_np, jacImIm_np  )
+#%%
 
+# Before closing the kernel to avoid the OpenMP confitct save the output.
+jacReRe, jacReIm, jacImRe, jacImIm   =  BuildJacobianViaTiles(16, spco=spco)
+#The neede Jacobian is given by: 
+jac = jacReRe + 1j*jacImRe  # there are several equivalent expressions.
 
+#%%
 
-
-
-
-
-
-
-
-
-
-
+##################  Do Not Import Torch! (due to OpenMP conflict)
+from os import path as ospath
+#Test the Chauchy-Riemann conditions: jacReRe = JacImIm and jacReIm = - jacImRe
+if False:
+    loc = "E:/MyOpticalSetups/EFC Papers/DataArrays"
+    fn = ospath.join(loc, "Jacobian_TorchThreeOAPmodel256x256_64x64_ReRe.npy")
+    assert ospath.isfile(fn)
+    ReRe = np.load(fn)
+    fn = ospath.join(loc, "Jacobian_TorchThreeOAPmodel256x256_64x64_ReIm.npy")
+    assert ospath.isfile(fn)
+    ReIm = np.load(fn)
+    fn = ospath.join(loc, "Jacobian_TorchThreeOAPmodel256x256_64x64_ImRe.npy")
+    assert ospath.isfile(fn)
+    ImRe = np.load(fn)
+    fn = ospath.join(loc, "Jacobian_TorchThreeOAPmodel256x256_64x64_ImIm.npy")
+    assert ospath.isfile(fn)
+    ImIm = np.load(fn)
+    
+    
+    lReRe = lambda ky, kx : ReRe[ky,kx,:]
+    lReIm = lambda ky, kx : ReIm[ky,kx,:]
+    lImRe = lambda ky, kx : ImRe[ky,kx,:]
+    lImIm = lambda ky, kx : ImIm[ky,kx,:]
+    
+    kx = 11; ky= 150;
+    plt.figure(); plt.plot(lReRe(ky,kx),'ko',lImIm(ky,kx),'rx'); plt.title(f'ReRe,ImIm condition. ky={ky}, kx={kx}')
+    plt.figure(); plt.plot(lReIm(ky,kx),'ko',-lImRe(ky,kx),'rx'); plt.title(f'ReIm,ImRe condition. ky={ky}, kx={kx}')
