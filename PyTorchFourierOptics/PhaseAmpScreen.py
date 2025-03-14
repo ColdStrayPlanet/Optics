@@ -19,6 +19,33 @@ import os
 import pickle
 import time
 
+
+#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#This makes a list of the 1D pixel indices corresponding to a rectangular
+# region (specified by its corners) within a flattened 2D array.
+#corners - list (or array) corresponding to the 2D coords of the corners of the
+# desired region in the following order [Xmin, Xmax, Ymin, Ymax].  The boundaries
+# are inclusive.
+#BigArrayShape a tuple (or whatever) corresponding the shape of the larger array
+def MakePixList(corners, BigArrayShape):
+    assert len(BigArrayShape) == 2
+    assert corners[2] <= BigArrayShape[0] and corners[3] <= BigArrayShape[0]
+    assert corners[0] <= BigArrayShape[1] and corners[2] <= BigArrayShape[1]
+    pixlist = []
+    rows = np.arange(corners[2], corners[3]+1)  # 'y'
+    cols = np.arange(corners[0], corners[1]+1)  # 'x'
+    ff = lambda r,c : np.ravel_multi_index((r,c), (BigArrayShape[0],BigArrayShape[1]))
+    for r in rows:
+        for c in cols:
+            pixlist.append(ff(r,c))
+    return pixlist
+#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+LittleJac = True  # only consider a certain set of pixels for the phase/amp screen
+if LittleJac:
+    pl = MakePixList([64,192,64,192],(256,256))
+
+
 #spline interpolation matrix file
 fnspl = os.path.join("E:\Python\Optics\PyTorchFourierOptics", "SplineInterpMatrix65x65_L20515.0.npy")
 if not os.path.isfile(fnspl):
@@ -46,29 +73,55 @@ jac *= 18.154
 img = img.reshape((256**2,))
 assert img.shape[0]  == jac.shape[0]
 
-if not os.path.isfile(fnjacSVD):
-   print("Can't find the file with the SVD of the Jacobian:", fnjacSVD, "This will take time (< 1hr on Ozzy) and memory 35 GB.")
-   U, s, V = np.linalg.svd(jac,full_matrices=True,compute_uv=True)  # jac = U@s@Vh
-   V = np.conj(V.T)   # this is because the 3rd item return by the SVD algo is Hermitian conj of V
-else:
-    print("Loading SVD.  Could take a couple of minutes.")
-    with open(fnjacSVD,'rb') as filep: SVD = pickle.load(filep) 
-    U = SVD['U']; s = SVD['s']; V = SVD['V']; note = SVD['note']
+if not LittleJac:  # Get (or do) the SVD of the full Jacobian
+    if not os.path.isfile(fnjacSVD):
+       print("Can't find the file with the SVD of the Jacobian:", fnjacSVD, "This will take time (< 1hr on Ozzy) and memory 35 GB.")
+       U, s, V = np.linalg.svd(jac,full_matrices=True,compute_uv=True)  # jac = U@s@Vh
+       V = np.conj(V.T)   # this is because the 3rd item returned by the SVD algo is Hermitian conj of V
+    else:
+        print("Loading SVD.  Could take a couple of minutes.")
+        with open(fnjacSVD,'rb') as filep: SVD = pickle.load(filep) 
+        U = SVD['U']; s = SVD['s']; V = SVD['V']; note = SVD['note']
+else: # reduce the Jacobian and then do (or get) its SVD
+    img = img[pl]
+    jac = jac[pl,:]
+    U, s, V = np.linalg.svd(jac, True,True)
+    V = np.conj(V.T)
+
+#%%
+
 
 #now compare the truncated pseudo-inverse solutions 
 nnz = np.count_nonzero(s)
-errm =  np.zeros((nnz,)) # error metric array
+errm1 =  np.zeros((nnz,)) # error metric array
+errm2 =  np.zeros((nnz,))
 norm1 = np.zeros((nnz,)) # solution norm array
 norm2 = np.zeros((nnz,))
 pj = np.zeros((jac.shape[1],jac.shape[0])).astype('complex')  # pseudoinverse 
 
+favorite = None
 timestart = time.time()
 for k in range(nnz):
     # if p and q are vectors of length M and N, resp., np.outer(p,q) has shape (M,N)
     pj +=   np.outer(V[:,k],np.conj(U[:,k]))/s[k]
+    if k == favorite:
+        pjfav = pj.copy()
+        print(f"favorite index {k}")
+        if id(pj) == id(pjfav):
+            raise Exception("There is no hope for this world.")
     sol = pj@img  # pinv solution (spline coefficients)
     imsol = splm@sol  # spline interpolation onto flattened amplitude/phase screen
     norm1[k] = (np.abs(imsol) - 1.).max()
     norm2[k] = np.median(np.abs(imsol) - 1.)
-    errm[k] = np.mean(np.abs(jac@sol - img)) 
-    print(f"k = {k} of {nnz} done. Time = {(time.time()-timestart)/3600} hours.")
+    errm1[k] = np.mean(np.abs(jac@sol - img)  ) 
+    errm2[k] = np.mean(np.abs(jac@sol - img)**2)
+    if k == favorite:  break
+    if np.remainder(k,50) == 0: 
+       print(f"k = {k} of {nnz} done. Time = {(time.time()-timestart)/60} minutes.")
+       
+favorite = 1123; fa = favorite 
+pjfav = (V[:,:fa]*(1./s[:fa]))@np.conj(U[:,:fa].T)
+sol = pjfav@img;  imsol = splm@sol ; hatimg = jac@sol
+
+
+
