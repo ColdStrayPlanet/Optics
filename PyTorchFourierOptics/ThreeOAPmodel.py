@@ -22,8 +22,8 @@ path.append(splinetoolsloc)
 import Bspline3 as BS
 
 GPU = True  #run on the GPU?
-screentype = 'spline'
-sz = 65  # phase/amp screen will be sz-by-sz
+screentype = 'pixels'  # 'pixels' or 'spline'
+sz = 23 # 65  # phase/amp screen will be sz-by-sz
 if GPU and torch.cuda.is_available():
    device = 'cuda'
 else:
@@ -36,28 +36,38 @@ F = TFO.TorchFourierOptics(params=theseparameters, GPU=GPU)
 #set up initial coefficients
 spco = torch.stack([  #two channel vector representing the spline coefficients
          torch.ones((sz*sz,), device=device), torch.zeros((sz*sz,), device=device)])
+#%%
+# if the model is linear, the Jacobian can be found by propagating the inputs one pixel (or spline coef) at a time
 crap = spco.requires_grad_(); del crap  # make spco differentiable
 #%%
 
 #This is the differentiable OAP model function
-#spco - 2 channel, 1D vector (i.e., flattened) of coefficients specifying either the square pixels or spline coefficients in the screen
+#spc - 1D vector (i.e., flattened) of coefficients specifying either the square pixels or spline coefficients in the screen
+#       can either be a complex-valued np.array or a 2-channel torch.array
 #slice_indices - specifies the spatial indices of the output tensor (corresponding to the image plane) to be returned.
-#   This may be desirable when calculating the gradient with respect to the input tenstor (spco)  
+#   This may be desirable when calculating the gradient with respect to the input tenstor (spc)  
 #    It is a list, tuple or array with 4 elements.  The spatial indices will be used as: output[:, si[0]:si[1], si[2]:si[3]]  (see code)
 #  if None - no slicing is applied and full spatial extent is returnd.
-def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set of 1D coefficients that specify the complex screen
+def OAP_Model(spc, slice_indices=None, screentype=screentype):  # spc is a set of 1D coefficients that specify the complex screen
    if slice_indices is not None:
        if len(slice_indices) != 4:
            raise ValueError("The parameter slice_indices must consist of 4 numbers.")
    if screentype not in ['spline','pixels']:
       raise ValueError("screentype must be 'pixels' or 'spline'.")
-   L0 = 20.515e3; dx0 = L0/sz;   #set up initial 1D coordinate
+   if not isinstance(spc, torch.Tensor):  # handle numpy.array input
+        spct = torch.stack([
+        torch.tensor(np.real(spc), dtype=torch.float32),
+        torch.tensor(np.imag(spc), dtype=torch.float32)], dim=0).to(device)
+   else: 
+       spct = spc
+      
+   L0 = 20.515e3; dx0 = L0/sz;   #set up initial 1D coordinate  - to match the 33x33 spline model in VLF, should be 20.60638e3 microns
    x0 = torch.linspace( - L0/2 + dx0/2, L0/2 - dx0/2, sz).to(device)  # units are microns
    x0np =  np.linspace( - L0/2 , L0/2 , 3*sz)
    #set up initial screen
    if screentype == 'pixels':
-      pts = torch.stack([spco[0].reshape((sz,sz)),
-                         spco[1].reshape((sz, sz)) ], dim=0)
+      pts = torch.stack([spct[0].reshape((sz,sz)),
+                         spct[1].reshape((sz, sz)) ], dim=0)
    elif screentype == 'spline':
       x0np, y0np = np.meshgrid(x0np,x0np,indexing='ij')
       filename = "SplineInterpMatrix"+str(sz)+"x"+str(sz)+"_L"+str(L0)+".npy"
@@ -70,12 +80,11 @@ def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set
          np.save(filename,spmat)
       spmat = torch.tensor(spmat).to(device)  # Spl.mat (the interpolation matrix) is purely real-valued
       pts = torch.stack([
-         (spmat@spco[0]).reshape((len(x0np),len(x0np))),
-         (spmat@spco[1]).reshape((len(x0np),len(x0np))) ])
+         (spmat@spct[0]).reshape((len(x0np),len(x0np))),
+         (spmat@spct[1]).reshape((len(x0np),len(x0np))) ])
       del spmat; torch.cuda.empty_cache()  # free this memory!
       x0 = torch.tensor(x0np).to(device)
    # resample pts to high res
-
    sz1 = 512
    dx01 = L0/sz1; x01 = torch.linspace( - L0/2 + dx01/2, L0/2 - dx01/2, sz1).to(device)
    g = F.ResampleField2D(pts,x0,x01)
@@ -85,7 +94,6 @@ def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set
    #now propagate to the occulter plane
    L1 = 2250.; dx1 = 8; x1 = torch.linspace(-L1/2 + dx1/2, L1/2 - dx1/2 , int(L1//dx1)).to(device)
    g = F.FFT_prop(g,x01,x1, 0.8e6, dist_in_front=8.5e4)
-   
    #apply stop and aperture in occulter plane
    g = F.ApplyStopAndOrAperture(g, x1 , 142., d_ap=2250., shape='square', smoothing_distance=71.)
 
@@ -108,16 +116,36 @@ def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set
    #gnp_det = F.torch2numpy_complex(g)
    
    #scale g to Virtual Lab Fusion amplitudes for the same optical system
-   g /= 1.3e10
+   g *= 7.589e-9  # this was found by 4x4 pixel (not spline) pinv solution requiring energy conservation with the 'realistic' image
    if slice_indices is None:
        return g
    else: 
        si = slice_indices
        return g[:,si[0]:si[1], si[2]:si[3]]
+#END OAP_Model function
    
 ##%%   this could be too big.  See the BuildJacobianViaTiles function below
 #mmodel = lambda spco: OAP_Model(spco, slice_indices=[110,130,60,80])
 #jac = torch.autograd.functional.jacobian(mmodel, spco)
+
+#%%
+def BuildJacobianLinear():
+    g = OAP_Model(spco,None)
+    #jacobian tensor
+    jac = torch.zeros((sz*sz,2,g.shape[1],g.shape[2]), device='cpu')
+    b = torch.zeros((sz*sz,),device=device)
+    time_start = time.time()
+    for k in range(sz*sz):
+        a = torch.zeros((sz*sz,),device=device)
+        a[k] = 1.0
+        c = torch.stack([a,b], dim=0).to(device)
+        if not  c.shape == spco.shape:
+            raise Exception(f"The input tensor shape of c, {c.shape}, is wrong.  It should be {spco.shape}.")
+        jac[k,:,:,:] = OAP_Model(c,None)
+        if np.mod(k,10) == 0:
+            print(f"Finished step {k} of {sz*sz}.  Total time elapsed is {(time.time()-time_start)/60} minutes.")
+    return jac
+
 
 #%%
 #This routine pieces together the Jacobian, one tile in the output plane at a time.
@@ -125,10 +153,11 @@ def OAP_Model(spco, slice_indices=None, screentype=screentype):  # spco is a set
 # nT - The number of 1D spatial segments for the tiling.  The number of tiles will be nT*nT
 # spco - input tensor specifying the point at which the gradient will be evaluated.
 #    if the system is linear in spco, the value of its elements should not matter
-def BuildJacobianViaTiles(nT, spco=spco):
+def _BuildJacobianViaTiles(nT, spc=spco):
+    raise Exception("For linear optical systems it is better to use BuildJacobianLinear")
     #first get the size of the output field and time it    
     tt = time.time()
-    g = OAP_Model(spco, slice_indices=None, screentype=screentype)
+    g = OAP_Model(spc, slice_indices=None, screentype=screentype)
     print("Time to run model without gradient:", (time.time() - tt), "seconds")
     print(f"field tensor shape: {g.shape}.  The spatial dimension is {g[0].shape}.")
     if g.shape[1] != g.shape[2]:
@@ -179,14 +208,14 @@ def BuildJacobianViaTiles(nT, spco=spco):
     jacImRe_np = jacImRe.numpy()
               
     return  ( jacReRe_np, jacReIm_np, jacImRe_np, jacImIm_np  )
-#%%
+
 
 # Before closing the kernel to avoid the OpenMP confitct save the output.
-jacReRe, jacReIm, jacImRe, jacImIm   =  BuildJacobianViaTiles(16, spco=spco)
-#The neede Jacobian is given by: 
-jac = jacReRe + 1j*jacImRe  # there are several equivalent expressions.
+if False:
+   jacReRe, jacReIm, jacImRe, jacImIm   =  _BuildJacobianViaTiles(16, spco=spco)
+   #The neede Jacobian is given by: 
+   jac = jacReRe + 1j*jacImRe  # there are several equivalent expressions.
 
-#%%
 
 ##################  Do Not Import Torch! (due to OpenMP conflict)
 from os import path as ospath

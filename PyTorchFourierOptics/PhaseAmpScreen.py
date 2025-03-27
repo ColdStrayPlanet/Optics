@@ -10,11 +10,22 @@ This uses the Jacobian from ThreeOAPmodel.py and the "measured" VLF intensity wi
 the OAP phase errors in attempt to find a reasonable phase/amplitude screen to
 account for OAP phase errors within an otherwise ideal model.
 
+Regularized Psuedo-inverse notes (see Eq. 29 in Frazin & Rodack JOSAA, 38, 10, 1557, 2021):
+    We seek the regularized pinv of the M-by-N (M > N) matrix A with:
+        A  - M-by-N matrix we seek to invert 
+        R  - N-by-N regularization matrix (positive semi-def)
+        y  - M vector of observations (measurements, data, whatever)
+        x  - N vector representing the regressand, i.e., the quantity to be estimated
+        x_0 - N vector for non-centered regularization
+        b -  positive regularization parameter
+        
+ \hat{x} = [A^T A + b R ]^{-1} \times [ A^T y + b R x0  ] 
 
 
 """
 
 import numpy as np
+import matplotlib.pyplot as plt
 import os
 import pickle
 import time
@@ -62,15 +73,19 @@ fnjacSVD = os.path.join("E:/MyOpticalSetups/EFC Papers/",
 #image file
 fnimg = os.path.join("E:/MyOpticalSetups/EFC Papers/DataArrays", 
     "Three_NonPlanarOAPcoronagraphWithScreens_RealisticModel_PWinput90deg_DomField.npy")
-jac = np.load(fnjac)
 img = np.load(fnimg)
+jac = np.load(fnjac)
 if jac.shape[1] != splm.shape[1]:
     raise Exception("Jacobian and spline interpolation matrix are inconsistant.")
 
+if LittleJac:  # cut Jac (and img) down to size
+    img = img.reshape((256**2,))[pl]
+    jac = jac[pl,:]
+
+#%%
 
 #multiply jac by the scaling factor for consistency (see 3/10/25 notes)\
 jac *= 18.154
-img = img.reshape((256**2,))
 assert img.shape[0]  == jac.shape[0]
 
 if not LittleJac:  # Get (or do) the SVD of the full Jacobian
@@ -83,45 +98,66 @@ if not LittleJac:  # Get (or do) the SVD of the full Jacobian
         with open(fnjacSVD,'rb') as filep: SVD = pickle.load(filep) 
         U = SVD['U']; s = SVD['s']; V = SVD['V']; note = SVD['note']
 else: # reduce the Jacobian and then do (or get) its SVD
-    img = img[pl]
-    jac = jac[pl,:]
     U, s, V = np.linalg.svd(jac, True,True)
     V = np.conj(V.T)
 
+#%%  i 
+if True: # regularized pinv, see notes in the doc string.  R is taken to be the identity matrix
+    sscale =s.max() # largest s.v.
+    JhJ = np.conj(jac.T)@jac
+    Jhy = np.conj(jac.T)@img
+    rp = np.logspace(-1,-7,13) # regularization parameters
+    solnom = np.ones((JhJ.shape[0],)).astype('complex')  # point for non-centered regularization
+    
+    erry = np.zeros((len(rp),))  # data misfit error
+    norm = np.zeros((len(rp),))  # norm of regularization value 
+    for k in range(len(rp)):
+        sol = np.linalg.inv( JhJ + (rp[k]*sscale**2)*np.eye(JhJ.shape[0])  )@( Jhy +  rp[k]*sscale**2*np.ones((JhJ.shape[0])) )
+        erry[k] = np.mean(np.abs(jac@sol - img)**2)
+        norm[k] = np.sqrt(np.mean(np.abs(sol - solnom)**2))
+
+    plt.figure();plt.plot(np.log10(rp), erry,'ko-'); plt.title('data misfit error');
+    plt.figure();plt.plot(np.log10(rp), norm,'ko-'); plt.title('RMS deviation from unity')
+
+#%% 
+    k = 1;  # try this reg param
+    sol = np.linalg.inv( JhJ + (rp[k]*sscale**2)*np.eye(JhJ.shape[0])  )@( Jhy +  rp[k]*sscale**2*np.ones((JhJ.shape[0])) )
+    imsol = jac@sol
+    splim = splm@sol  # this is the phase/amplitude screen
+
+
 #%%
-
-
-#now compare the truncated pseudo-inverse solutions 
-nnz = np.count_nonzero(s)
-errm1 =  np.zeros((nnz,)) # error metric array
-errm2 =  np.zeros((nnz,))
-norm1 = np.zeros((nnz,)) # solution norm array
-norm2 = np.zeros((nnz,))
-pj = np.zeros((jac.shape[1],jac.shape[0])).astype('complex')  # pseudoinverse 
-
-favorite = None
-timestart = time.time()
-for k in range(nnz):
-    # if p and q are vectors of length M and N, resp., np.outer(p,q) has shape (M,N)
-    pj +=   np.outer(V[:,k],np.conj(U[:,k]))/s[k]
-    if k == favorite:
-        pjfav = pj.copy()
-        print(f"favorite index {k}")
-        if id(pj) == id(pjfav):
-            raise Exception("There is no hope for this world.")
-    sol = pj@img  # pinv solution (spline coefficients)
-    imsol = splm@sol  # spline interpolation onto flattened amplitude/phase screen
-    norm1[k] = (np.abs(imsol) - 1.).max()
-    norm2[k] = np.median(np.abs(imsol) - 1.)
-    errm1[k] = np.mean(np.abs(jac@sol - img)  ) 
-    errm2[k] = np.mean(np.abs(jac@sol - img)**2)
-    if k == favorite:  break
-    if np.remainder(k,50) == 0: 
-       print(f"k = {k} of {nnz} done. Time = {(time.time()-timestart)/60} minutes.")
-       
-favorite = 1123; fa = favorite 
-pjfav = (V[:,:fa]*(1./s[:fa]))@np.conj(U[:,:fa].T)
-sol = pjfav@img;  imsol = splm@sol ; hatimg = jac@sol
+if False:  #now compare the truncated pseudo-inverse solutions 
+    nnz = np.count_nonzero(s)
+    errm1 =  np.zeros((nnz,)) # error metric array
+    errm2 =  np.zeros((nnz,))
+    norm1 = np.zeros((nnz,)) # solution norm array
+    norm2 = np.zeros((nnz,))
+    pj = np.zeros((jac.shape[1],jac.shape[0])).astype('complex')  # pseudoinverse 
+    
+    favorite = None
+    timestart = time.time()
+    for k in range(nnz):
+        # if p and q are vectors of length M and N, resp., np.outer(p,q) has shape (M,N)
+        pj +=   np.outer(V[:,k],np.conj(U[:,k]))/s[k]
+        if k == favorite:
+            pjfav = pj.copy()
+            print(f"favorite index {k}")
+            if id(pj) == id(pjfav):
+                raise Exception("There is no hope for this world.")
+        sol = pj@img  # pinv solution (spline coefficients)
+        imsol = splm@sol  # spline interpolation onto flattened amplitude/phase screen
+        norm1[k] = (np.abs(imsol) - 1.).max()
+        norm2[k] = np.median(np.abs(imsol) - 1.)
+        errm1[k] = np.mean(np.abs(jac@sol - img)  ) 
+        errm2[k] = np.mean(np.abs(jac@sol - img)**2)
+        if k == favorite:  break
+        if np.remainder(k,50) == 0: 
+           print(f"k = {k} of {nnz} done. Time = {(time.time()-timestart)/60} minutes.")
+           
+    favorite = 1123; fa = favorite 
+    pjfav = (V[:,:fa]*(1./s[:fa]))@np.conj(U[:,:fa].T)
+    sol = pjfav@img;  imsol = splm@sol ; hatimg = jac@sol
 
 
 
