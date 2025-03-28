@@ -132,7 +132,7 @@ def OAP_Model(spc, slice_indices=None, screentype=screentype):  # spc is a set o
 def BuildJacobianLinear():
     g = OAP_Model(spco,None)
     #jacobian tensor
-    jac = torch.zeros((sz*sz,2,g.shape[1],g.shape[2]), device='cpu')
+    jac = np.zeros((g.shape[1]*g.shape[2],sz*sz)).astype('complex')
     b = torch.zeros((sz*sz,),device=device)
     time_start = time.time()
     for k in range(sz*sz):
@@ -141,7 +141,10 @@ def BuildJacobianLinear():
         c = torch.stack([a,b], dim=0).to(device)
         if not  c.shape == spco.shape:
             raise Exception(f"The input tensor shape of c, {c.shape}, is wrong.  It should be {spco.shape}.")
-        jac[k,:,:,:] = OAP_Model(c,None)
+        g = OAP_Model(c,None)
+        jac_k = g[0,:,:].cpu().numpy() + 1j*g[1,:,:].cpu().numpy()  # the Jacobian is simply the unit response
+        jac[:,k] = jac_k.reshape((g.shape[1]*g.shape[2],))
+
         if np.mod(k,10) == 0:
             print(f"Finished step {k} of {sz*sz}.  Total time elapsed is {(time.time()-time_start)/60} minutes.")
     return jac
