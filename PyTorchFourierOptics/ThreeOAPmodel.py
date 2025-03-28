@@ -22,8 +22,9 @@ path.append(splinetoolsloc)
 import Bspline3 as BS
 
 GPU = True  #run on the GPU?
-screentype = 'pixels'  # 'pixels' or 'spline'
-sz = 23 # 65  # phase/amp screen will be sz-by-sz
+differentiable = False  # if True, the model will be differentiable with respect to the input tensor
+screentype = 'spline'  # 'pixels' or 'spline' a 41x41 'pixel' grid gives very uniform entrance field (with unity coefs)
+sz =  23  # phase/amp screen will be sz-by-sz
 if GPU and torch.cuda.is_available():
    device = 'cuda'
 else:
@@ -36,16 +37,16 @@ F = TFO.TorchFourierOptics(params=theseparameters, GPU=GPU)
 #set up initial coefficients
 spco = torch.stack([  #two channel vector representing the spline coefficients
          torch.ones((sz*sz,), device=device), torch.zeros((sz*sz,), device=device)])
-#%%
 # if the model is linear, the Jacobian can be found by propagating the inputs one pixel (or spline coef) at a time
-crap = spco.requires_grad_(); del crap  # make spco differentiable
+if differentiable:
+   crap = spco.requires_grad_(); del crap  # make spco differentiable
 #%%
 
 #This is the differentiable OAP model function
 #spc - 1D vector (i.e., flattened) of coefficients specifying either the square pixels or spline coefficients in the screen
 #       can either be a complex-valued np.array or a 2-channel torch.array
 #slice_indices - specifies the spatial indices of the output tensor (corresponding to the image plane) to be returned.
-#   This may be desirable when calculating the gradient with respect to the input tenstor (spc)  
+#   This may be desirable when calculating the gradient with respect to the input tenstor (spc)
 #    It is a list, tuple or array with 4 elements.  The spatial indices will be used as: output[:, si[0]:si[1], si[2]:si[3]]  (see code)
 #  if None - no slicing is applied and full spatial extent is returnd.
 def OAP_Model(spc, slice_indices=None, screentype=screentype):  # spc is a set of 1D coefficients that specify the complex screen
@@ -58,9 +59,9 @@ def OAP_Model(spc, slice_indices=None, screentype=screentype):  # spc is a set o
         spct = torch.stack([
         torch.tensor(np.real(spc), dtype=torch.float32),
         torch.tensor(np.imag(spc), dtype=torch.float32)], dim=0).to(device)
-   else: 
+   else:
        spct = spc
-      
+
    L0 = 20.515e3; dx0 = L0/sz;   #set up initial 1D coordinate  - to match the 33x33 spline model in VLF, should be 20.60638e3 microns
    x0 = torch.linspace( - L0/2 + dx0/2, L0/2 - dx0/2, sz).to(device)  # units are microns
    x0np =  np.linspace( - L0/2 , L0/2 , 3*sz)
@@ -90,7 +91,6 @@ def OAP_Model(spc, slice_indices=None, screentype=screentype):  # spc is a set o
    g = F.ResampleField2D(pts,x0,x01)
    #create the soft edge on the plane wave source in VLF
    g = F.ApplyStopAndOrAperture(g, x01 ,-1. , d_ap=L0, shape='square', smoothing_distance=1210.)
-
    #now propagate to the occulter plane
    L1 = 2250.; dx1 = 8; x1 = torch.linspace(-L1/2 + dx1/2, L1/2 - dx1/2 , int(L1//dx1)).to(device)
    g = F.FFT_prop(g,x01,x1, 0.8e6, dist_in_front=8.5e4)
@@ -114,16 +114,16 @@ def OAP_Model(spc, slice_indices=None, screentype=screentype):  # spc is a set o
    #the numpy operation below can cause an OpenMP conflict on some installations
    #F.MakeAmplitudeImage(g,x3,'linear'); plt.title('detector plane');
    #gnp_det = F.torch2numpy_complex(g)
-   
+
    #scale g to Virtual Lab Fusion amplitudes for the same optical system
-   g *= 7.589e-9  # this was found by 4x4 pixel (not spline) pinv solution requiring energy conservation with the 'realistic' image
+   g *= 1.442e-9  # this gives the output for flat input the same total energy as the realistic image
    if slice_indices is None:
        return g
-   else: 
+   else:
        si = slice_indices
        return g[:,si[0]:si[1], si[2]:si[3]]
 #END OAP_Model function
-   
+
 ##%%   this could be too big.  See the BuildJacobianViaTiles function below
 #mmodel = lambda spco: OAP_Model(spco, slice_indices=[110,130,60,80])
 #jac = torch.autograd.functional.jacobian(mmodel, spco)
@@ -155,7 +155,7 @@ def BuildJacobianLinear():
 #    if the system is linear in spco, the value of its elements should not matter
 def _BuildJacobianViaTiles(nT, spc=spco):
     raise Exception("For linear optical systems it is better to use BuildJacobianLinear")
-    #first get the size of the output field and time it    
+    #first get the size of the output field and time it
     tt = time.time()
     g = OAP_Model(spc, slice_indices=None, screentype=screentype)
     print("Time to run model without gradient:", (time.time() - tt), "seconds")
@@ -168,18 +168,18 @@ def _BuildJacobianViaTiles(nT, spc=spco):
         raise Exception(f"The spatial dimension {g.shape[1]} needs to be divisible by input parameter nT {nT}.")
     nnp = int(npix/nT)
     sd = [0, 0, 0, 0]  # slice indices
-    
-    #build up the jacobian.  
+
+    #build up the jacobian.
     jacReRe = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the real of g w.r.t the real part of spco
     jacReIm = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the real of g w.r.t the imag part of spco
     jacImRe = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the imag of g w.r.t the real part of spco
     jacImIm = torch.zeros((g.shape[1],g.shape[2],spco.shape[1])).to('cpu') # Jacobian of the imag of g w.r.t the imag part of spco
 
     del g;  torch.cuda.empty_cache()
-    
+
     #in this loop, liljac is the jacobian for one tile.  It is 5D:
     #   dim 0 = real [0] or image [1]  part of gradient
-    #   dim 1 = y spatial dimension 
+    #   dim 1 = y spatial dimension
     #   dim 2 = x spatial dimension
     #   dim 3 = real [0] or imag [1] part of spco
     #   dim 4 = 1D spatial index of spco (spco is spatially flattened)
@@ -187,7 +187,7 @@ def _BuildJacobianViaTiles(nT, spc=spco):
         tt = time.time()
         sd[2] = nnp*kx ; sd[3] = sd[2] + nnp
         for ky in range(nT):
-          sd[0] = nnp*ky ; sd[1] = sd[0] + nnp  
+          sd[0] = nnp*ky ; sd[1] = sd[0] + nnp
           mmodel = lambda spco: OAP_Model(spco, slice_indices=sd)
 
           liljac = torch.autograd.functional.jacobian(mmodel, spco)
@@ -206,14 +206,14 @@ def _BuildJacobianViaTiles(nT, spc=spco):
     jacReIm_np = jacReIm.numpy()
     jacImIm_np = jacImIm.numpy()
     jacImRe_np = jacImRe.numpy()
-              
+
     return  ( jacReRe_np, jacReIm_np, jacImRe_np, jacImIm_np  )
 
 
 # Before closing the kernel to avoid the OpenMP confitct save the output.
 if False:
    jacReRe, jacReIm, jacImRe, jacImIm   =  _BuildJacobianViaTiles(16, spco=spco)
-   #The neede Jacobian is given by: 
+   #The neede Jacobian is given by:
    jac = jacReRe + 1j*jacImRe  # there are several equivalent expressions.
 
 
@@ -234,13 +234,13 @@ if False:
     fn = ospath.join(loc, "Jacobian_TorchThreeOAPmodel256x256_64x64_ImIm.npy")
     assert ospath.isfile(fn)
     ImIm = np.load(fn)
-    
-    
+
+
     lReRe = lambda ky, kx : ReRe[ky,kx,:]
     lReIm = lambda ky, kx : ReIm[ky,kx,:]
     lImRe = lambda ky, kx : ImRe[ky,kx,:]
     lImIm = lambda ky, kx : ImIm[ky,kx,:]
-    
+
     kx = 11; ky= 150;
     plt.figure(); plt.plot(lReRe(ky,kx),'ko',lImIm(ky,kx),'rx'); plt.title(f'ReRe,ImIm condition. ky={ky}, kx={kx}')
     plt.figure(); plt.plot(lReIm(ky,kx),'ko',-lImRe(ky,kx),'rx'); plt.title(f'ReIm,ImRe condition. ky={ky}, kx={kx}')
