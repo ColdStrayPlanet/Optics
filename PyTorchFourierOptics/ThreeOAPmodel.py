@@ -33,7 +33,7 @@ else:
    if not torch.cuda.is_available(): print("cuda is not available.  CPU implementation.")
 theseparameters = {'wavelength': 0.9, 'max_chirp_step_deg':30.0}
 F = TFO.TorchFourierOptics(params=theseparameters, GPU=GPU)
-
+#%%
 #set up initial coefficients
 spco = torch.stack([  #two channel vector representing the spline coefficients
          torch.ones((sz*sz,), device=device), torch.zeros((sz*sz,), device=device)])
