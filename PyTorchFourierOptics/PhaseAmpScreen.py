@@ -151,28 +151,26 @@ if True:  #now compare the truncated pseudo-inverse solutions
 
     img1 = img - np.sum(jac, axis=1) # assumes Jacobian sum has the same energy and optimized global phase shift
 
-    favorite = None
     timestart = time.time()
     for k in range(nnz):
         # if p and q are vectors of length M and N, resp., np.outer(p,q) has shape (M,N)
         pj +=   np.outer(V[:,k],np.conj(U[:,k]))/s[k]
-        if k == favorite:
-            pjfav = pj.copy()
-            print(f"favorite index {k}")
-            if id(pj) == id(pjfav):
-                raise Exception("There is no hope for this world.")
         sol = pj@img1   # pinv solution (spline coefficients)
         imsol = splm@(sol + 1.)  # spline interpolation onto flattened amplitude/phase screen
-        norm1[k] = (np.abs(imsol) - 1.).max()
-        norm2[k] = np.median(np.abs(imsol) - 1.)
+        norm1[k] = (np.abs(imsol - 1.)).max()
+        norm2[k] = np.median(np.abs(imsol - 1.))
         errm1[k] = np.mean(np.abs(jac@(sol + 1.) - img)  )
         errm2[k] = np.mean(np.abs(jac@(sol + 1.) - img)**2)
-        if k == favorite:  break
-        if np.remainder(k,50) == 0:
+        if False:  #np.remainder(k,50) == 0:
            print(f"k = {k} of {nnz} done. Time = {(time.time()-timestart)/60} minutes.")
+        nerr1 = np.mean( np.abs(img)  )
+        nerr2 = np.mean( np.abs(img)**2 )
+        errm1 /= nerr1; errm2 /= nerr2
+
 #%%
-    favorite = 263; fa = favorite
-    pjfav = (V[:,:fa]*(1./s[:fa]))@np.conj(U[:,:fa].T)
-    sol = pjfav@img1;  imsol = splm@(sol + 1.) ; hatimg = jac@(sol+1)
-plt.figure();plt.imshow(np.abs(  imsol.reshape((69,69))),cmap='seismic');plt.title(f'{fa}: |screen|'); plt.colorbar();
-plt.figure();plt.imshow(np.angle(imsol.reshape((69,69))),cmap='seismic');plt.title(f'{fa}: angle(screen)'); plt.colorbar();
+favorite = [ 305, 348, 377,422,443];
+for fa in favorite:
+  pjfav = (V[:,:fa]*(1./s[:fa]))@np.conj(U[:,:fa].T)
+  sol = pjfav@img1;  imsol = splm@(sol + 1.) ; hatimg = jac@(sol+1)
+  plt.figure();plt.imshow(np.abs(  imsol.reshape((69,69))),cmap='seismic');plt.title(f'{fa}: |screen|'); plt.colorbar();
+  plt.figure();plt.imshow(np.angle(imsol.reshape((69,69))),cmap='seismic');plt.title(f'{fa}: angle(screen)'); plt.colorbar();
