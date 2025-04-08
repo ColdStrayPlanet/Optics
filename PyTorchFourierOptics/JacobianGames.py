@@ -13,6 +13,7 @@ import numpy as np
 from os import path as ospath  #needed for isfile(), join(), etc.
 from sys import path as syspath
 import random
+import time
 import matplotlib.pyplot as plt
 
 
@@ -39,7 +40,8 @@ def MakePixList(corners, BigArrayShape):
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 LittleJac = True  # only consider a certain set of pixels for the phase/amp screen
 if LittleJac:
-    pl = MakePixList([64,191,64,191],(256,256))  # the central 128x128 square
+    pl = MakePixList([97,160,97,160],(256,256))  # take a central square
+    sqnpl = int(np.sqrt(len(pl)))  #
 
 machine = "homeLinux"
 #machine = "officeWindows"
@@ -59,11 +61,11 @@ jaco = np.load(fnjac)  # original jacobian (ideal jacobian)
 jaco = jaco[pl,:]  # extract the central 128x128 pixels
 
 #%% make the perturbed jacobian
-pertsc = 3.e-2  # pertubation scale
+pertsc = 1.e-2  # pertubation scale
 jacp = pertsc*np.abs(jaco).max()*(np.random.randn(jaco.shape[0],jaco.shape[1]) +
                                1j*np.random.randn(jaco.shape[0],jaco.shape[1]))
 jacp += jaco
-f = np.sum(jacp,axis=1).reshape((128,128))
+f = np.sum(jacp,axis=1).reshape((sqnpl,sqnpl))
 plt.figure();plt.imshow(np.abs(f),cmap='seismic',origin='lower');plt.colorbar();
 
 #%%
@@ -89,19 +91,22 @@ for kp in range(obs.shape[0]): # loop over pixels
 
 #%%
 
+tstart = time.time()
 for ki in range(n_iter):
-   acts = np.arange(jaco.shape[1])
+   acts = np.arange(jaco.shape[1])  # actuator indices
    random.shuffle(acts)  # shuffle the order
    for kt in range(len(acts)):
       act = acts[kt]  # index of actuator
       for kp in range(obs.shape[0]):
-         s =  jaco[kp, :act  ]@actphasors[:act]
-         s += jaco[kp, act+1:]@actphasors[act+1:]
+         s =  jacp[kp, :act  ]@actphasors[:act]
+         s += jacp[kp, act+1:]@actphasors[act+1:]
          sr = np.real(s); si = np.imag(s)
+         #assert False  # replace jacp with jaco
 
          # regression block.  the pinv will be applied to mat.
          mat = np.zeros((len(angles),2))
          y = np.zeros((len(angles),))  # vector of measurements
+
          for ka in range(len(angles)):
             y[ka] = obs[kp,act,ka]
             mat[ka, 0] =  sr*np.cos(angles[ka]) + si*np.sin(angles[ka])
@@ -109,3 +114,5 @@ for ki in range(n_iter):
          mat *= 2
          jachat = np.linalg.pinv(mat)@y
          jaco[kp,act] = jachat[0] + 1j*jachat[1]  # jacobian update
+   print(f"iterion {ki} complete.  Total time is {(time.time()-tstart)/60} minutes.")
+   plt.figure(); plt.imshow(np.abs(np.sum(jaco,axis=1)).reshape((62,62)),cmap='seismic',origin='lower');plt.colorbar();
