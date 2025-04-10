@@ -67,52 +67,136 @@ jacp = pertsc*np.abs(jaco).max()*(np.random.randn(jaco.shape[0],jaco.shape[1]) +
 jacp += jaco
 f = np.sum(jacp,axis=1).reshape((sqnpl,sqnpl))
 plt.figure();plt.imshow(np.abs(f),cmap='seismic',origin='lower');plt.colorbar();
+#%%
+#This class performs various tasks for probe based measurement of the Jacobian for EFC
+#JacInit - initial guess of the Jacobian to start the optimization
+#JacTrue - the true Jacobian used to simulate the measurements
+#nModAngles - the number of angles used modulated each DM actuator
+#defaultDMC - the default command (phase angle in this case) for the DMs that are not being modulated in a given measurement
+class EmpiricalJacobian():
+   def __init__(self, JacInit, JacTrue, nModAngles=8, defaultDMC=0.):
+      if JacInit.shape != JacTrue.shape:
+         raise Exception(f"JacInit [shape: {JacInit.shape}] and JacTrue [shape: {JacTrue.shape}] are not compatible.")
+      self.JacInit = JacInit
+      self.JacTrue = JacTrue
+      self.angles = np.linspace(0, 2*np.pi*(nModAngles-1)/nModAngles, nModAngles)
+      self.defaultDMC = defaultDMC
+      return(None)
+
+   #This gets the intensity data used to estimate the Jacobian
+   #fileWpath  filename, including the path specifying the .npy file
+   #mode - either 'load' or 'create' the array containing the intensity data
+   #noiseModel - not yet implemented
+   # returns - None.  The array containg the data is placed in self.dataset
+   def GetIntensityData(self, fileWpath, mode='load',noiseModel='PoissonPlusRead'):
+      if mode not in ['load','create']:
+         raise ValueError("kwarg mode must be 'load' or 'create'.")
+      if fileWpath[-4:] != ".npy":
+         raise ValueError("fileWpath must be an .npy file.")
+      if mode == 'create':
+         if not ospath.isfile(fileWpath):
+            yn = input(f"The file {fileWpath} does not exist.  Create it [y/n]?")
+            if yn not in ['y','Y','yes','Yes','Si','si','oui','Oui']:
+               print("Exiting.  If you want to load a data file, set the mode kwarg to 'load'.")
+               return(None)
+         else:
+            yn = input(f"The file {fileWpath} already exists.  Overwrite it [y/n]?")
+            if yn not in ['y','Y','yes','Yes','Si','si','oui','Oui']:
+               print("No new file made.  Exiting.")
+               return(None)
+      else:  # mode = 'load'
+         if not ospath.isfile(fileWpath):
+            print(f"file {fileWpath} not found.  Exiting.")
+            return(None)
+         else:
+            self.dataset = np.load(fileWpath)
+            return(None)
+
+      #  create the intensity data set
+      jact = self.JacTrue
+      self.dataset = np.zeros((jact.shape[0],jact.shape[1],self.nModAngles))
+      for kc in range(jact.shape[1]):  # loop over actuators
+         dmp = np.exp(1j*np.ones((jact.shape[1],))*self.defaultDMC) # phases for non-modulated actuators
+         for kg in range(len(self.angles)):  # phasor for modulated actuator
+            dmp[kc] = np.exp(1j*self.angles[kg])
+            for kp in range(jact.shape[0]): # pixel loop
+               u = jact[kp,:]@dmp
+               self.dataset[kp, kc, kg] = np.real(u*np.conj(u))  # put in the intensity
+      np.save(fileWpath,self.dataset)
+
+   #This returns the intensity for a specified pixel index (1D(
+   #row - the row vector containing the estimated jacobian for the pixel in question
+   #   it is a real-valued vector of length of twice the number of actuators (real and imag parts)
+   #actnum - the index of the actuator being modulated
+   #actphase - the phase of modulated actuator
+   #return_grad - also return the gradient w.r.t to 'row'
+   #   the gradient is a real-valued vector of length of twice the number of actuators
+   def IntensityModel(self,row,actnum,actphase,return_grad=False):
+      if len(row) != 2*self.JacTrue.shape[1] or row.ndim != 1:
+         raise ValueError(f"the argument row must be 1D and have length {2*self.JacTrue.shape[1]}.  It has shape {row.shape}.")
+      na = self.JacTrue.shape[1]  # number of actuators
+      dmp = np.exp(1j*np.ones((na,))*self.defaultDMC) # phases for non-modulated actuators
+      dmp[actnum] = np.exp(1j*actphase)
+      u = (row[:na] + 1j*row[na:])@dmp
+      uu = u*np.conj(u)
+      if not return_grad:
+         return(uu)
+      else: # determine and return the gradient w.r.t. row
+         grad = np.zeros((len(row),))
+         grad[actnum]      =  2.*row[actnum] #quadratic term
+         grad[actnum + na] = 2.*row[actnum + na]  #quadratic term
+         #the other part of the gradient involves the
+
+
+
+      return(None)
+
 
 #%%
 
-acts = np.arange(jaco.shape[1])  # actuator indices
-angles = np.linspace(0, 2*np.pi*15/16, 16)
-n_iter = 3  # number of (more-or-less) gradient steps
-
-obs = np.zeros((jaco.shape[0], jaco.shape[1], len(angles)))  #intensity data - modulate each actuator independently!
-
-for kt in range(len(acts)):  # actuator loop
-   actphases  = np.zeros(jaco.shape[1])  # initial phases of actuators
-   actphasors = np.exp(1j*actphases)
-   for ka in range(len(angles)): # data collection loop
-       actphases[ kt] = angles[ka]
-       actphasors[kt] = np.exp(1j*angles[ka])
-       obs[:,kt,ka] = np.abs(jacp@actphasors)**2
-ObsAngleMean = np.mean(obs, axis=2)
-for kp in range(obs.shape[0]): # loop over pixels
-  for kt in range(len(acts)):
-     obs[kp,kt,:] -= ObsAngleMean[kp,kt]
-
-
-#%%
-
-tstart = time.time()
-for ki in range(n_iter):
+if False: # prepare dataset for the iteration scheme below
    acts = np.arange(jaco.shape[1])  # actuator indices
-   random.shuffle(acts)  # shuffle the order
-   for kt in range(len(acts)):
-      act = acts[kt]  # index of actuator
-      for kp in range(obs.shape[0]):
-         s =  jacp[kp, :act  ]@actphasors[:act]
-         s += jacp[kp, act+1:]@actphasors[act+1:]
-         sr = np.real(s); si = np.imag(s)
-         #assert False  # replace jacp with jaco
+   angles = np.linspace(0, 2*np.pi*15/16, 16)
+   n_iter = 3  # number of (more-or-less) gradient steps
 
-         # regression block.  the pinv will be applied to mat.
-         mat = np.zeros((len(angles),2))
-         y = np.zeros((len(angles),))  # vector of measurements
+   obs = np.zeros((jaco.shape[0], jaco.shape[1], len(angles)))  #intensity data - modulate each actuator independently!
 
-         for ka in range(len(angles)):
-            y[ka] = obs[kp,act,ka]
-            mat[ka, 0] =  sr*np.cos(angles[ka]) + si*np.sin(angles[ka])
-            mat[ka, 1] = -sr*np.sin(angles[ka]) + si*np.cos(angles[ka])
-         mat *= 2
-         jachat = np.linalg.pinv(mat)@y
-         jaco[kp,act] = jachat[0] + 1j*jachat[1]  # jacobian update
-   print(f"iterion {ki} complete.  Total time is {(time.time()-tstart)/60} minutes.")
-   plt.figure(); plt.imshow(np.abs(np.sum(jaco,axis=1)).reshape((62,62)),cmap='seismic',origin='lower');plt.colorbar();
+   for kt in range(len(acts)):  # actuator loop
+      actphases  = np.zeros(jaco.shape[1])  # initial phases of actuators
+      actphasors = np.exp(1j*actphases)
+      for ka in range(len(angles)): # data collection loop
+          actphases[ kt] = angles[ka]
+          actphasors[kt] = np.exp(1j*angles[ka])
+          obs[:,kt,ka] = np.abs(jacp@actphasors)**2
+   ObsAngleMean = np.mean(obs, axis=2)
+   for kp in range(obs.shape[0]): # loop over pixels
+     for kt in range(len(acts)):
+        obs[kp,kt,:] -= ObsAngleMean[kp,kt]
+
+
+#%% this simiple iteration scheme works surprisingly well
+   tstart = time.time()
+   for ki in range(n_iter):
+      acts = np.arange(jaco.shape[1])  # actuator indices
+      random.shuffle(acts)  # shuffle the order
+      for kt in range(len(acts)):
+         act = acts[kt]  # index of actuator
+         for kp in range(obs.shape[0]):
+            s =  jacp[kp, :act  ]@actphasors[:act]
+            s += jacp[kp, act+1:]@actphasors[act+1:]
+            sr = np.real(s); si = np.imag(s)
+            #assert False  # replace jacp with jaco
+
+            # regression block.  the pinv will be applied to mat.
+            mat = np.zeros((len(angles),2))
+            y = np.zeros((len(angles),))  # vector of measurements
+
+            for ka in range(len(angles)):
+               y[ka] = obs[kp,act,ka]
+               mat[ka, 0] =  sr*np.cos(angles[ka]) + si*np.sin(angles[ka])
+               mat[ka, 1] = -sr*np.sin(angles[ka]) + si*np.cos(angles[ka])
+            mat *= 2
+            jachat = np.linalg.pinv(mat)@y
+            jaco[kp,act] = jachat[0] + 1j*jachat[1]  # jacobian update
+      print(f"iterion {ki} complete.  Total time is {(time.time()-tstart)/60} minutes.")
+      plt.figure(); plt.imshow(np.abs(np.sum(jaco,axis=1)).reshape((62,62)),cmap='seismic',origin='lower');plt.colorbar();
