@@ -79,6 +79,7 @@ class EmpiricalJacobian():
          raise Exception(f"JacInit [shape: {JacInit.shape}] and JacTrue [shape: {JacTrue.shape}] are not compatible.")
       self.JacInit = JacInit
       self.JacTrue = JacTrue
+      self.nModAngles = nModAngles
       self.angles = np.linspace(0, 2*np.pi*(nModAngles-1)/nModAngles, nModAngles)
       self.defaultDMC = defaultDMC
       return(None)
@@ -87,20 +88,20 @@ class EmpiricalJacobian():
    #fileWpath  filename, including the path specifying the .npy file
    #mode - either 'load' or 'create' the array containing the intensity data
    #noiseModel - not yet implemented
-   # returns - None.  The array containg the data is placed in self.dataset
-   def GetIntensityData(self, fileWpath, mode='load',noiseModel='PoissonPlusRead'):
+   # returns -  The array containg the data is placed in self.dataset
+   def GetOrMakeIntensityData(self, fileWpath, mode='load',noiseModel='PoissonPlusRead'):
       if mode not in ['load','create']:
          raise ValueError("kwarg mode must be 'load' or 'create'.")
       if fileWpath[-4:] != ".npy":
          raise ValueError("fileWpath must be an .npy file.")
       if mode == 'create':
          if not ospath.isfile(fileWpath):
-            yn = input(f"The file {fileWpath} does not exist.  Create it [y/n]?")
+            yn = input(f"The file {fileWpath} does not exist.  Create it [y/n]? ")
             if yn not in ['y','Y','yes','Yes','Si','si','oui','Oui']:
                print("Exiting.  If you want to load a data file, set the mode kwarg to 'load'.")
                return(None)
          else:
-            yn = input(f"The file {fileWpath} already exists.  Overwrite it [y/n]?")
+            yn = input(f"The file {fileWpath} already exists.  Overwrite it [y/n]? ")
             if yn not in ['y','Y','yes','Yes','Si','si','oui','Oui']:
                print("No new file made.  Exiting.")
                return(None)
@@ -132,24 +133,37 @@ class EmpiricalJacobian():
    #return_grad - also return the gradient w.r.t to 'row'
    #   the gradient is a real-valued vector of length of twice the number of actuators
    def IntensityModel(self,row,actnum,actphase,return_grad=False):
+      if self.defaultDMC != 0.:
+         raise Exception("The default phase (self.DefaultDMC) must be zero for this formulation.")
       if len(row) != 2*self.JacTrue.shape[1] or row.ndim != 1:
          raise ValueError(f"the argument row must be 1D and have length {2*self.JacTrue.shape[1]}.  It has shape {row.shape}.")
       na = self.JacTrue.shape[1]  # number of actuators
       dmp = np.exp(1j*np.ones((na,))*self.defaultDMC) # phases for non-modulated actuators
       dmp[actnum] = np.exp(1j*actphase)
       u = (row[:na] + 1j*row[na:])@dmp
-      uu = u*np.conj(u)
+      uu = np.real( u*np.conj(u) )
       if not return_grad:
          return(uu)
       else: # determine and return the gradient w.r.t. row
          grad = np.zeros((len(row),))
+
+         #quadratic term
          grad[actnum]      =  2.*row[actnum] #quadratic term
          grad[actnum + na] = 2.*row[actnum + na]  #quadratic term
-         #the other part of the gradient involves the
 
+         #the R_m and Zm terms
+         stm = np.sin(actphase); ctm = np.cos(actphase);
+         Smr = np.sum(row[:na]) - row[actnum]  # real part
+         Smi = np.sum(row[na:]) - row[na + actnum]  #imag part
+         grad[actnum]      += 2.*Smr*ctm + 2.*Smi*stm
+         grad[actnum + na] += 2.*Smr*stm - 2.*Smi*ctm
+         unir = np.ones((na,))*2.*(row[actnum]*ctm + row[actnum + na]*stm + Smr)  # the last term corresponds to Zm
+         unii = np.ones((na,))*2.*(row[actnum]*stm - row[actnum + na]*ctm + Smi)  # the last term corresponds to Zm
+         unii[actnum] = 0.; unir[actnum]= 0.
+         grad[:na] += unir
+         grad[na:] += unii
 
-
-      return(None)
+         return((uu, grad))
 
 
 #%%
