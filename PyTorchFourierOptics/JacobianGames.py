@@ -155,8 +155,8 @@ class EmpiricalJacobian():
          stm = np.sin(actphase); ctm = np.cos(actphase);
          Smr = np.sum(row[:na]) - row[actnum]  # real part
          Smi = np.sum(row[na:]) - row[na + actnum]  #imag part
-         grad[actnum]      += 2.*Smr*ctm + 2.*Smi*stm
-         grad[actnum + na] += 2.*Smr*stm - 2.*Smi*ctm
+         grad[actnum]      +=  2.*Smr*ctm + 2.*Smi*stm
+         grad[actnum + na] += -2.*Smr*stm + 2.*Smi*ctm
          unir = np.ones((na,))*2.*(row[actnum]*ctm + row[actnum + na]*stm + Smr)  # the last term corresponds to Zm
          unii = np.ones((na,))*2.*(row[actnum]*stm - row[actnum + na]*ctm + Smi)  # the last term corresponds to Zm
          unii[actnum] = 0.; unir[actnum]= 0.
@@ -214,3 +214,45 @@ if False: # prepare dataset for the iteration scheme below
             jaco[kp,act] = jachat[0] + 1j*jachat[1]  # jacobian update
       print(f"iterion {ki} complete.  Total time is {(time.time()-tstart)/60} minutes.")
       plt.figure(); plt.imshow(np.abs(np.sum(jaco,axis=1)).reshape((62,62)),cmap='seismic',origin='lower');plt.colorbar();
+
+if False:  # check algebra
+   from sympy import symbols, cos, sin, I, expand, diff, simplify, re, im, conjugate
+
+   # Define symbols
+   dpr, dpi, spr, spi, theta_l = symbols('dpr dpi spr spi theta_l', real=True)
+   dlr, dli = symbols('dlr dli', real=True)  # For l ≠ n
+
+   # Define complex values
+   dpn = dpr + I * dpi
+   Sn = spr + I * spi
+   exp_jtheta = cos(theta_l) + I * sin(theta_l)
+
+   # Define R_n = Re[dpn * exp(j*theta_l) * conjugate(Sn)]
+   Rn_complex = dpn * exp_jtheta * conjugate(Sn)
+   Rn = re(Rn_complex)
+
+   # Compute partial derivatives of Rn
+   dR_d_dpr = simplify(diff(Rn, dpr))
+   dR_d_dpi = simplify(diff(Rn, dpi))
+   dR_d_dlr = simplify(diff(Rn, dlr).subs({dlr: dpr, dli: dpi}))  # l ≠ n placeholder
+   dR_d_dli = simplify(diff(Rn, dli).subs({dlr: dpr, dli: dpi}))
+
+   # Compute S_n = sum_{h≠n} d_ph = spr + i spi
+   # For Z_n = sum_{h ≠ n} sum_{h' ≠ n} d_{ph} d_{ph'}^* = |S_n|^2 = S_n * S_n^*
+   Zn = Sn * conjugate(Sn)
+
+   # Partial derivatives of Z_n
+   dZ_d_dlr = simplify(diff(Zn, spr))
+   dZ_d_dli = simplify(diff(Zn, spi))
+   dZ_d_dpr = simplify(diff(Zn, dpr))
+   dZ_d_dpi = simplify(diff(Zn, dpi))
+
+   # Print results
+   print("∂R_n/∂d_{pn}^r =", dR_d_dpr)
+   print("∂R_n/∂d_{pn}^i =", dR_d_dpi)
+   print("∂R_n/∂d_{pl}^r (l ≠ n) =", dR_d_dlr)
+   print("∂R_n/∂d_{pl}^i (l ≠ n) =", dR_d_dli)
+   print("∂Z_n/∂d_{pl}^r (l ≠ n) =", dZ_d_dlr)
+   print("∂Z_n/∂d_{pl}^i (l ≠ n) =", dZ_d_dli)
+   print("∂Z_n/∂d_{pn}^r =", dZ_d_dpr)
+   print("∂Z_n/∂d_{pn}^i =", dZ_d_dpi)
