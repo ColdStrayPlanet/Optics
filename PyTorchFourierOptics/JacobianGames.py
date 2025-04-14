@@ -216,6 +216,7 @@ if False: # prepare dataset for the iteration scheme below
       plt.figure(); plt.imshow(np.abs(np.sum(jaco,axis=1)).reshape((62,62)),cmap='seismic',origin='lower');plt.colorbar();
 
 if False:  # check algebra
+#%%
    from sympy import symbols, cos, sin, I, expand, diff, simplify, re, im, conjugate
 
    # Define symbols
@@ -236,23 +237,3 @@ if False:  # check algebra
    dR_d_dpi = simplify(diff(Rn, dpi))
    dR_d_dlr = simplify(diff(Rn, dlr).subs({dlr: dpr, dli: dpi}))  # l ≠ n placeholder
    dR_d_dli = simplify(diff(Rn, dli).subs({dlr: dpr, dli: dpi}))
-
-   # Compute S_n = sum_{h≠n} d_ph = spr + i spi
-   # For Z_n = sum_{h ≠ n} sum_{h' ≠ n} d_{ph} d_{ph'}^* = |S_n|^2 = S_n * S_n^*
-   Zn = Sn * conjugate(Sn)
-
-   # Partial derivatives of Z_n
-   dZ_d_dlr = simplify(diff(Zn, spr))
-   dZ_d_dli = simplify(diff(Zn, spi))
-   dZ_d_dpr = simplify(diff(Zn, dpr))
-   dZ_d_dpi = simplify(diff(Zn, dpi))
-
-   # Print results
-   print("∂R_n/∂d_{pn}^r =", dR_d_dpr)
-   print("∂R_n/∂d_{pn}^i =", dR_d_dpi)
-   print("∂R_n/∂d_{pl}^r (l ≠ n) =", dR_d_dlr)
-   print("∂R_n/∂d_{pl}^i (l ≠ n) =", dR_d_dli)
-   print("∂Z_n/∂d_{pl}^r (l ≠ n) =", dZ_d_dlr)
-   print("∂Z_n/∂d_{pl}^i (l ≠ n) =", dZ_d_dli)
-   print("∂Z_n/∂d_{pn}^r =", dZ_d_dpr)
-   print("∂Z_n/∂d_{pn}^i =", dZ_d_dpi)
