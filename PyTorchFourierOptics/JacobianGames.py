@@ -14,6 +14,8 @@ from os import path as ospath  #needed for isfile(), join(), etc.
 from sys import path as syspath
 import random
 import time
+from scipy.optimize import minimize as mize
+import torch
 import matplotlib.pyplot as plt
 
 
@@ -54,34 +56,58 @@ elif machine == 'officeWindows':
     PropMatLoc = "E:/MyOpticalSetups/EFC Papers/DataArrays"
 syspath.insert(0, MySplineToolsLocation)
 
-#Jacobian file
-fnjac = ospath.join(PropMatLoc,
-         "Jacobian_TorchThreeOAPmodel256x256_23x23_complex.npy") #"DataArrays/Jacobian_TorchThreeOAPmodel256x256_65x65_complex.npy")
-jaco = np.load(fnjac)  # original jacobian (ideal jacobian)
-jaco = jaco[pl,:]  # extract the central 128x128 pixels
+#Jacobian files
+#fnjac = ospath.join(PropMatLoc,"Jacobian_TorchThreeOAPmodel256x256_23x23_complex.npy") #"DataArrays/Jacobian_TorchThreeOAPmodel256x256_65x65_complex.npy")
+#Nominal Jacobian
+fnjacn = ospath.join(PropMatLoc, 'JacobianTorch3OAP_64x64pix_23x23spl_Nominal_complex.npy')
+jacn = np.load(fnjacn)  #
+#perturbed Jocobian
+fnjacp = ospath.join(PropMatLoc, 'JacobianTorch3OAP_64x64pix_23x23spl_Perturbed_complex.npy')
+jacp = np.load(fnjacp)  #
+# filename with intensity values
+fnIntensity = ospath.join(PropMatLoc,"Intensity_NoNoise_JacobianTorch3OAP_64x64pix_23x23spl_Perturbed_complex.npy")
 
-#%% make the perturbed jacobian
-pertsc = 1.e-2  # pertubation scale
-jacp = pertsc*np.abs(jaco).max()*(np.random.randn(jaco.shape[0],jaco.shape[1]) +
-                               1j*np.random.randn(jaco.shape[0],jaco.shape[1]))
-jacp += jaco
-f = np.sum(jacp,axis=1).reshape((sqnpl,sqnpl))
-plt.figure();plt.imshow(np.abs(f),cmap='seismic',origin='lower');plt.colorbar();
+
+#jacn = jacn[pl,:]  # extract the central pixels
+
+#%% make a perturbed jacobian
+if False:
+   pertsc = 2.e-2  # pertubation scale
+   jacp = pertsc*np.abs(jacn).max()*(np.random.randn(jacn.shape[0],jacn.shape[1]) +
+                                  1j*np.random.randn(jacn.shape[0],jacn.shape[1]))
+   jacp += jacn
+   f = np.sum(jacp,axis=1).reshape((sqnpl,sqnpl))
+   plt.figure();plt.imshow(np.abs(f),cmap='seismic',origin='lower');plt.colorbar();
 #%%
 #This class performs various tasks for probe based measurement of the Jacobian for EFC
-#JacInit - initial guess of the Jacobian to start the optimization
-#JacTrue - the true Jacobian used to simulate the measurements
+#JacInit - complex valued, initial guess of the Jacobian to start the optimization
+#JacTrue - complex valued, the true Jacobian used to simulate the measurements
 #nModAngles - the number of angles used modulated each DM actuator
 #defaultDMC - the default command (phase angle in this case) for the DMs that are not being modulated in a given measurement
 class EmpiricalJacobian():
-   def __init__(self, JacInit, JacTrue, nModAngles=8, defaultDMC=0.):
+   def __init__(self, JacInit, JacTrue, nModAngles=8, defaultDMC=0., Torch=False):
+      self.Torch = False
       if JacInit.shape != JacTrue.shape:
          raise Exception(f"JacInit [shape: {JacInit.shape}] and JacTrue [shape: {JacTrue.shape}] are not compatible.")
+      if not ((np.iscomplexobj(JacInit)) and (np.iscomplexobj(JacTrue))):
+         raise ValueError("Input args JacInit and JacTrue must be complex valued.")
+      if Torch:
+         if not torch.cuda.is_available():
+            raise Exception("cuda not available.  Rerun with the Torch=False option.")
+         else:
+            self.Torch = True
+            self.device = "cuda"
+      self.dataset = None
       self.JacInit = JacInit
       self.JacTrue = JacTrue
       self.nModAngles = nModAngles
       self.angles = np.linspace(0, 2*np.pi*(nModAngles-1)/nModAngles, nModAngles)
       self.defaultDMC = defaultDMC
+      na = JacInit.shape[1]
+      self.na1D = int(np.round(np.sqrt(na)))
+      if not np.isclose(np.sqrt(na), na/round(np.sqrt(na))):
+         raise Exception("Expecting square array of actuators.  See self.Cost.")
+      self.maxjac = np.max(np.abs(JacTrue))
       return(None)
 
    #This gets the intensity data used to estimate the Jacobian
@@ -124,6 +150,79 @@ class EmpiricalJacobian():
                u = jact[kp,:]@dmp
                self.dataset[kp, kc, kg] = np.real(u*np.conj(u))  # put in the intensity
       np.save(fileWpath,self.dataset)
+
+   #This is a cost function to enable gradient-based optimization of a given row of the Jacobian
+   # (see self.IntensityModel).  This assumes the data are stored in the class variable self.dataset
+   #row - the vector over whose values the cost function will be optimized
+   #    it is a row of the Jacobian matrix.  It is real valued: [real part, imag part]
+   #pixind - the detector pixel index corresponding to the row number of the Jacobian being optimized
+   #regparam - scalar regularization parameter on the square difference between row and nominal value of row
+   #centercon - force the imag component of the element corresp. to the central actuator to be zero.
+   def Cost(self, row, pixind, regparam=0., centercon=False, return_grad=False):
+      if self.dataset is None:
+         raise Exception("The dataset needs to be loaded as a member variable.  See self.GetOrMakeIntensityData.")
+      if regparam < 0.:
+               raise ValueError("input 'regparam' must be >= 0.")
+      nact = self.JacTrue.shape[1]  # number of DM actuators
+      cost = 0.
+      if return_grad:
+         dcost = np.zeros(len(row))
+      for ka in range(nact): # loop over actuators
+         for kt in range(len(self.angles)):
+             ykakt = self.dataset[pixind, ka, kt]
+             if return_grad:
+               I, dI = self.IntensityModel(row, ka, self.angles[kt], return_grad=True)
+             else:
+               I     = self.IntensityModel(row, ka, self.angles[kt], return_grad=False)
+             cost += 0.5*(I - ykakt)**2
+             if return_grad:
+               dcost += (I - ykakt)*dI
+             if centercon:
+                 kc = np.ravel_multi_index((self.na1D//2,self.na1D//2) ,(self.na1D, self.na1D))
+                 cost += 0.5*self.maxjac*row[self.na1D + kc]**2  # imag comp of element corresp. the central actuator
+                 if return_grad:
+                    dcost[self.na1D + kc] += self.maxjac*row[self.na1D + kc]
+             if regparam > 0.:
+                 rowinit = np.concatenate((np.real(self.JacInit[pixind,:]), np.imag(self.JacInit[pixind,:])))
+                 cost  += 0.5*regparam*np.sum((row - rowinit)**2)
+                 if return_grad > 0:
+                    dcost += regparam*(row - rowinit)
+      if return_grad:
+         return (cost, dcost)
+      else:
+         return(cost)
+
+   #This calls optimization routines to optimize a row of the Jacobian
+   #pixind - the detector pixel index (see self.CostIntensity)
+   #method - optimization method.  Must be one of: ['CG' ]
+   #startpoint - the starting guess for the optimization.  If None, self.JacInit is used
+   def RowOptimize(self, pixind, method='CG', startpoint=None):
+      ops = {'disp':False, 'maxiter':50}
+      fun = lambda row: self.Cost(row, pixind, return_grad=True)
+      if startpoint is None:
+         startpoint = np.concatenate((np.real(self.JacInit[pixind,:]),np.imag(self.JacInit[pixind,:])))
+      out = mize(fun, startpoint, args=(), method=method, jac=True, options=ops)
+
+      return(out)
+
+   def LoopOverPixels(self):
+      self.GetOrMakeIntensityData(fnIntensity,'load')
+      nact = self.JacInit.shape[1]
+      timestart = time.time()
+      jacnew = np.zeros(self.JacInit.shape).astype('complex')
+      npix = self.JacInit.shape[0]
+      optinfo = []
+      for kp in range(npix):
+         out = self.RowOptimize(kp)
+         x = out['x']
+         jacnew[kp,:] = x[:nact] + 1j*x[nact:]
+         del(out['x'])
+         optinfo.append(out)
+         if kp == 0:
+            print(f"First pixel of {npix} done.  Estimated total time is {npix*(time.time()-timestart)/3600} hours.")
+         if np.remainder(kp,100) == 0:
+            print(f"Pixel {kp} of {npix} done.  Time so far is {(time.time()-timestart)/3600} hours.")
+      return( (jacnew, optinfo) )
 
    #This returns the intensity for a specified pixel index (1D(
    #row - the row vector containing the estimated jacobian for the pixel in question
@@ -169,14 +268,14 @@ class EmpiricalJacobian():
 #%%
 
 if False: # prepare dataset for the iteration scheme below
-   acts = np.arange(jaco.shape[1])  # actuator indices
+   acts = np.arange(jacn.shape[1])  # actuator indices
    angles = np.linspace(0, 2*np.pi*15/16, 16)
    n_iter = 3  # number of (more-or-less) gradient steps
 
-   obs = np.zeros((jaco.shape[0], jaco.shape[1], len(angles)))  #intensity data - modulate each actuator independently!
+   obs = np.zeros((jacn.shape[0], jacn.shape[1], len(angles)))  #intensity data - modulate each actuator independently!
 
    for kt in range(len(acts)):  # actuator loop
-      actphases  = np.zeros(jaco.shape[1])  # initial phases of actuators
+      actphases  = np.zeros(jacn.shape[1])  # initial phases of actuators
       actphasors = np.exp(1j*actphases)
       for ka in range(len(angles)): # data collection loop
           actphases[ kt] = angles[ka]
@@ -191,7 +290,7 @@ if False: # prepare dataset for the iteration scheme below
 #%% this simiple iteration scheme works surprisingly well
    tstart = time.time()
    for ki in range(n_iter):
-      acts = np.arange(jaco.shape[1])  # actuator indices
+      acts = np.arange(jacn.shape[1])  # actuator indices
       random.shuffle(acts)  # shuffle the order
       for kt in range(len(acts)):
          act = acts[kt]  # index of actuator
@@ -211,9 +310,9 @@ if False: # prepare dataset for the iteration scheme below
                mat[ka, 1] = -sr*np.sin(angles[ka]) + si*np.cos(angles[ka])
             mat *= 2
             jachat = np.linalg.pinv(mat)@y
-            jaco[kp,act] = jachat[0] + 1j*jachat[1]  # jacobian update
+            jacn[kp,act] = jachat[0] + 1j*jachat[1]  # jacobian update
       print(f"iterion {ki} complete.  Total time is {(time.time()-tstart)/60} minutes.")
-      plt.figure(); plt.imshow(np.abs(np.sum(jaco,axis=1)).reshape((62,62)),cmap='seismic',origin='lower');plt.colorbar();
+      plt.figure(); plt.imshow(np.abs(np.sum(jacn,axis=1)).reshape((62,62)),cmap='seismic',origin='lower');plt.colorbar();
 
 if False:  # check algebra
 #%%
