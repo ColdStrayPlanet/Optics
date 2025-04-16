@@ -66,8 +66,6 @@ fnjacp = ospath.join(PropMatLoc, 'JacobianTorch3OAP_64x64pix_23x23spl_Perturbed_
 jacp = np.load(fnjacp)  #
 # filename with intensity values
 fnIntensity = ospath.join(PropMatLoc,"Intensity_NoNoise_JacobianTorch3OAP_64x64pix_23x23spl_Perturbed_complex.npy")
-
-
 #jacn = jacn[pl,:]  # extract the central pixels
 
 #%% make a perturbed jacobian
@@ -164,60 +162,119 @@ class EmpiricalJacobian():
       if regparam < 0.:
                raise ValueError("input 'regparam' must be >= 0.")
       nact = self.JacTrue.shape[1]  # number of DM actuators
-      cost = 0.
-      if return_grad:
-         dcost = np.zeros(len(row))
-      for ka in range(nact): # loop over actuators
-         for kt in range(len(self.angles)):
-             ykakt = self.dataset[pixind, ka, kt]
+      if not self.Torch:
+         cost = 0.
+         if return_grad:
+            dcost = np.zeros(len(row))
+         for ka in range(nact): # loop over actuators
+            for kt in range(len(self.angles)):
+                ykakt = self.dataset[pixind, ka, kt]
+                if return_grad:
+                  I, dI = self.IntensityModel(row, ka, self.angles[kt], return_grad=True)
+                else:
+                  I     = self.IntensityModel(row, ka, self.angles[kt], return_grad=False)
+                cost += 0.5*(I - ykakt)**2
+                if return_grad:
+                  dcost += (I - ykakt)*dI
+
+         if centercon:
+             kc = np.ravel_multi_index((self.na1D//2,self.na1D//2) ,(self.na1D, self.na1D))
+             cost += 0.5*self.maxjac*row[self.na1D + kc]**2  # imag comp of element corresp. the central actuator
              if return_grad:
-               I, dI = self.IntensityModel(row, ka, self.angles[kt], return_grad=True)
-             else:
-               I     = self.IntensityModel(row, ka, self.angles[kt], return_grad=False)
-             cost += 0.5*(I - ykakt)**2
-             if return_grad:
-               dcost += (I - ykakt)*dI
-             if centercon:
-                 kc = np.ravel_multi_index((self.na1D//2,self.na1D//2) ,(self.na1D, self.na1D))
-                 cost += 0.5*self.maxjac*row[self.na1D + kc]**2  # imag comp of element corresp. the central actuator
-                 if return_grad:
-                    dcost[self.na1D + kc] += self.maxjac*row[self.na1D + kc]
-             if regparam > 0.:
-                 rowinit = np.concatenate((np.real(self.JacInit[pixind,:]), np.imag(self.JacInit[pixind,:])))
-                 cost  += 0.5*regparam*np.sum((row - rowinit)**2)
-                 if return_grad > 0:
-                    dcost += regparam*(row - rowinit)
-      if return_grad:
-         return (cost, dcost)
-      else:
-         return(cost)
+                dcost[self.na1D + kc] += self.maxjac*row[self.na1D + kc]
+         if regparam > 0.:
+             rowinit = np.concatenate((np.real(self.JacInit[pixind,:]), np.imag(self.JacInit[pixind,:])))
+             cost  += 0.5*regparam*np.sum((row - rowinit)**2)
+             if return_grad > 0:
+                dcost += regparam*(row - rowinit)
+         if return_grad:
+            return (cost, dcost)
+         else:
+            return(cost)
+      else: # self.Torch is True  this in PyTorch, leveraging the autograd setup in self.IntensityMdoel
+         device = self.device
+         row_torch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=True)
+         cost_torch = torch.tensor(0.0, dtype=torch.float32, device=device)
+
+         for ka in range(nact):
+            for kt in range(len(self.angles)):
+               ykakt = torch.tensor(self.dataset[pixind, ka, kt], dtype=torch.float32, device=device)
+               I = self.IntensityModel(row_torch, ka, self.angles[kt], return_grad=False)
+               cost_torch += 0.5 * (I - ykakt)**2
+
+         if centercon:
+            kc = np.ravel_multi_index((self.na1D//2, self.na1D//2), (self.na1D, self.na1D))
+            center_val = row_torch[self.na1D + kc]
+            cost_torch += 0.5 * self.maxjac * center_val**2
+
+         if regparam > 0.:
+            rowinit = np.concatenate((np.real(self.JacInit[pixind,:]), np.imag(self.JacInit[pixind,:])))
+            rowinit_torch = torch.tensor(rowinit, dtype=torch.float32, device=device)
+            diff = row_torch - rowinit_torch
+            cost_torch += 0.5 * regparam * torch.sum(diff**2)
+
+         if return_grad:  #return numpy array because the output is already differentiable
+            cost_torch.backward()
+            grad = row_torch.grad.detach().cpu().numpy()
+            return cost_torch.item(), grad
+         else:
+            return cost_torch
+
 
    #This calls optimization routines to optimize a row of the Jacobian
    #pixind - the detector pixel index (see self.CostIntensity)
    #method - optimization method.  Must be one of: ['CG' ]
    #startpoint - the starting guess for the optimization.  If None, self.JacInit is used
-   def RowOptimize(self, pixind, method='CG', startpoint=None):
-      ops = {'disp':False, 'maxiter':50}
-      fun = lambda row: self.Cost(row, pixind, return_grad=True)
+   def RowOptimize(self, pixind, method='CG', startpoint=None, Torchlearnrate=1.e-3,TorchAdamIters=10,use_lbfgs=True):
+      if pixind < 0 or pixind >= self.JacInit.shape[0]:
+         raise IndexError(f"pixind {pixind} is out of bounds for Jacobian with {self.JacInit.shape[0]} rows.")
       if startpoint is None:
-         startpoint = np.concatenate((np.real(self.JacInit[pixind,:]),np.imag(self.JacInit[pixind,:])))
-      out = mize(fun, startpoint, args=(), method=method, jac=True, options=ops)
+            startpoint = np.concatenate((np.real(self.JacInit[pixind,:]),np.imag(self.JacInit[pixind,:])))
+      if not self.Torch:  # use numpy
+         ops = {'disp':False, 'maxiter':50}
+         fun = lambda row: self.Cost(row, pixind, return_grad=True)
+         out = mize(fun, startpoint, args=(), method=method, jac=True, options=ops)
+         return((out['x'], out['fun']))
+      else:   # use PyTorch
+         rowtorch = torch.tensor(startpoint, dtype=torch.float32, device=self.device, requires_grad=True)
+         optimizer = torch.optim.Adam([rowtorch], lr=Torchlearnrate)
+         for i in range(TorchAdamIters):
+            optimizer.zero_grad()  # Réinitialiser les gradients à chaque itération
+            cost = self.Cost(rowtorch, pixind, return_grad=False)
+            cost.backward()  # Rétropropagation pour calculer les gradients
+            optimizer.step()  # parameter update
+         #mid_result = rowtorch.detach().cpu().numpy()
+         if use_lbfgs:
+              def closure():
+                 optimizer_lbfgs.zero_grad()
+                 cost, _ = self.Cost(rowtorch, pixind, return_grad=True)
+                 cost.backward()
+                 return cost
+              optimizer_lbfgs = torch.optim.LBFGS([rowtorch], max_iter=20, tolerance_grad=1e-5, line_search_fn='strong_wolfe')
+              optimizer_lbfgs.step(closure)
+         final_row = rowtorch.detach().cpu().numpy()
+         final_cost = self.Cost(rowtorch.detach(), pixind, return_grad=False).item()
+         return (final_row, final_cost)
 
-      return(out)
+
+         return rowtorch.detach().cpu().numpy()  #numpy output
 
    def LoopOverPixels(self):
       self.GetOrMakeIntensityData(fnIntensity,'load')
       nact = self.JacInit.shape[1]
-      timestart = time.time()
-      jacnew = np.zeros(self.JacInit.shape).astype('complex')
       npix = self.JacInit.shape[0]
-      optinfo = []
+      jacnew = np.zeros(self.JacInit.shape).astype('complex')
+      cost = []
+      timestart = time.time()
+
       for kp in range(npix):
          out = self.RowOptimize(kp)
-         x = out['x']
-         jacnew[kp,:] = x[:nact] + 1j*x[nact:]
-         del(out['x'])
-         optinfo.append(out)
+         if not self.Torch:
+            row = out[0]; cost.append(out[1])
+         else:  # self.Torch is True
+            row = out
+            optinfo = None
+         jacnew[kp,:] = row[:nact] + 1j*row[nact:]
          if kp == 0:
             print(f"First pixel of {npix} done.  Estimated total time is {npix*(time.time()-timestart)/3600} hours.")
          if np.remainder(kp,100) == 0:
@@ -237,32 +294,50 @@ class EmpiricalJacobian():
       if len(row) != 2*self.JacTrue.shape[1] or row.ndim != 1:
          raise ValueError(f"the argument row must be 1D and have length {2*self.JacTrue.shape[1]}.  It has shape {row.shape}.")
       na = self.JacTrue.shape[1]  # number of actuators
-      dmp = np.exp(1j*np.ones((na,))*self.defaultDMC) # phases for non-modulated actuators
-      dmp[actnum] = np.exp(1j*actphase)
-      u = (row[:na] + 1j*row[na:])@dmp
-      uu = np.real( u*np.conj(u) )
-      if not return_grad:
-         return(uu)
-      else: # determine and return the gradient w.r.t. row
-         grad = np.zeros((len(row),))
+      if not self.Torch:
+         dmp = np.exp(1j*np.ones((na,))*self.defaultDMC) # phases for non-modulated actuators
+         dmp[actnum] = np.exp(1j*actphase)  # treat the modulated actuator
+         u = (row[:na] + 1j*row[na:])@dmp
+         uu = np.real( u*np.conj(u) )
+         if not return_grad:
+            return(uu)
+         else: # determine and return the gradient w.r.t. row
+            grad = np.zeros((len(row),))
 
-         #quadratic term
-         grad[actnum]      =  2.*row[actnum] #quadratic term
-         grad[actnum + na] = 2.*row[actnum + na]  #quadratic term
+            #quadratic term
+            grad[actnum]      =  2.*row[actnum] #quadratic term
+            grad[actnum + na] = 2.*row[actnum + na]  #quadratic term
 
-         #the R_m and Zm terms
-         stm = np.sin(actphase); ctm = np.cos(actphase);
-         Smr = np.sum(row[:na]) - row[actnum]  # real part
-         Smi = np.sum(row[na:]) - row[na + actnum]  #imag part
-         grad[actnum]      +=  2.*Smr*ctm + 2.*Smi*stm
-         grad[actnum + na] += -2.*Smr*stm + 2.*Smi*ctm
-         unir = np.ones((na,))*2.*(row[actnum]*ctm + row[actnum + na]*stm + Smr)  # the last term corresponds to Zm
-         unii = np.ones((na,))*2.*(row[actnum]*stm - row[actnum + na]*ctm + Smi)  # the last term corresponds to Zm
-         unii[actnum] = 0.; unir[actnum]= 0.
-         grad[:na] += unir
-         grad[na:] += unii
+            #the R_m and Zm terms
+            stm = np.sin(actphase); ctm = np.cos(actphase);
+            Smr = np.sum(row[:na]) - row[actnum]  # real part
+            Smi = np.sum(row[na:]) - row[na + actnum]  #imag part
+            grad[actnum]      +=  2.*Smr*ctm + 2.*Smi*stm
+            grad[actnum + na] += -2.*Smr*stm + 2.*Smi*ctm
+            unir = np.ones((na,))*2.*(row[actnum]*ctm + row[actnum + na]*stm + Smr)  # the last term corresponds to Zm
+            unii = np.ones((na,))*2.*(row[actnum]*stm - row[actnum + na]*ctm + Smi)  # the last term corresponds to Zm
+            unii[actnum] = 0.; unir[actnum]= 0.
+            grad[:na] += unir
+            grad[na:] += unii
 
-         return((uu, grad))
+            return((uu, grad))
+      else:  #  self.Torch is True, implement the intensity in PyTorch using autograd
+            device = self.device
+            rowtorch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=True)
+            real = rowtorch[:na]; imag = rowtorch[na:]
+            complex_row = torch.complex(real, imag)
+            dmp = torch.ones(na, dtype=torch.complex64, device=device)
+            dmp *= torch.exp(1j * torch.tensor(self.defaultDMC, device=device))
+            dmp[actnum] = torch.exp(1j * torch.tensor(actphase, device=device))
+            u = torch.dot(complex_row, dmp)
+            uu = torch.real(u * torch.conj(u))
+            if not return_grad:  # this is needs to be kept in the form of a differentiable torch tensor
+               return uu
+            else:  # return a numpy array containing the gradient
+               uu.backward()
+               grad = rowtorch.grad.detach().cpu().numpy()
+               return (uu.item(), grad)
+
 
 
 #%%
