@@ -12,6 +12,7 @@ This tests some my ideas for iterative Jacobian improvement for EFC
 import numpy as np
 from os import path as ospath  #needed for isfile(), join(), etc.
 from sys import path as syspath
+import warnings
 import random
 import time
 from scipy.optimize import minimize as mize
@@ -95,6 +96,8 @@ class EmpiricalJacobian():
          else:
             self.Torch = True
             self.device = "cuda"
+      #this worning shows in in self.Cost , but it's OK because the input is a assured to be an np.array in this case
+      warnings.filterwarnings("ignore", message="To copy construct from a tensor")
       self.dataset = None
       self.JacInit = JacInit
       self.JacTrue = JacTrue
@@ -157,6 +160,8 @@ class EmpiricalJacobian():
    #regparam - scalar regularization parameter on the square difference between row and nominal value of row
    #centercon - force the imag component of the element corresp. to the central actuator to be zero.
    def Cost(self, row, pixind, regparam=0., centercon=False, return_grad=False):
+      if self.Torch and return_grad:
+         raise Exception("return_grad must be False if self.Torch is True (autograd is employed).")
       if self.dataset is None:
          raise Exception("The dataset needs to be loaded as a member variable.  See self.GetOrMakeIntensityData.")
       if regparam < 0.:
@@ -223,7 +228,7 @@ class EmpiricalJacobian():
 
    #This calls optimization routines to optimize a row of the Jacobian
    #pixind - the detector pixel index (see self.CostIntensity)
-   #method - optimization method.  Must be one of: ['CG' ]
+   #method - optimization method.  Must be one of: ['CG' ] - only matters if not self.Torch
    #startpoint - the starting guess for the optimization.  If None, self.JacInit is used
    def RowOptimize(self, pixind, method='CG', startpoint=None, Torchlearnrate=1.e-3,TorchAdamIters=10,use_lbfgs=True):
       if pixind < 0 or pixind >= self.JacInit.shape[0]:
@@ -247,17 +252,14 @@ class EmpiricalJacobian():
          if use_lbfgs:
               def closure():
                  optimizer_lbfgs.zero_grad()
-                 cost, _ = self.Cost(rowtorch, pixind, return_grad=True)
+                 cost = self.Cost(rowtorch, pixind, return_grad=False)
                  cost.backward()
                  return cost
               optimizer_lbfgs = torch.optim.LBFGS([rowtorch], max_iter=20, tolerance_grad=1e-5, line_search_fn='strong_wolfe')
               optimizer_lbfgs.step(closure)
          final_row = rowtorch.detach().cpu().numpy()
          final_cost = self.Cost(rowtorch.detach(), pixind, return_grad=False).item()
-         return (final_row, final_cost)
-
-
-         return rowtorch.detach().cpu().numpy()  #numpy output
+         return (final_row, final_cost)  #numpy output
 
    def LoopOverPixels(self):
       self.GetOrMakeIntensityData(fnIntensity,'load')
@@ -323,7 +325,10 @@ class EmpiricalJacobian():
             return((uu, grad))
       else:  #  self.Torch is True, implement the intensity in PyTorch using autograd
             device = self.device
-            rowtorch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=True)
+            if isinstance(row, np.ndarray):
+               rowtorch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=True)
+            else:
+               rowtorch = row
             real = rowtorch[:na]; imag = rowtorch[na:]
             complex_row = torch.complex(real, imag)
             dmp = torch.ones(na, dtype=torch.complex64, device=device)
