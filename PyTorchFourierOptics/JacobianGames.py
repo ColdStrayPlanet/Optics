@@ -198,12 +198,15 @@ class EmpiricalJacobian():
             return(cost)
       else: # self.Torch is True  this in PyTorch, leveraging the autograd setup in self.IntensityMdoel
          device = self.device
-         row_torch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=True)
-         cost_torch = torch.tensor(0.0, dtype=torch.float32, device=device)
+         if not isinstance(row, torch.Tensor):
+            row_torch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=True)
+         else:
+            row_torch = row
+         cost_torch = 0.0   ## don't make a new tensor! torch.tensor(0.0, dtype=torch.float32, device=device)
 
          for ka in range(nact):
             for kt in range(len(self.angles)):
-               ykakt = torch.tensor(self.dataset[pixind, ka, kt], dtype=torch.float32, device=device)
+               ykakt = torch.as_tensor(self.dataset[pixind, ka, kt], dtype=torch.float32, device=device)  # as_tensor avoids making an unneeded copy
                I = self.IntensityModel(row_torch, ka, self.angles[kt], return_grad=False)
                cost_torch += 0.5 * (I - ykakt)**2
 
@@ -214,7 +217,7 @@ class EmpiricalJacobian():
 
          if regparam > 0.:
             rowinit = np.concatenate((np.real(self.JacInit[pixind,:]), np.imag(self.JacInit[pixind,:])))
-            rowinit_torch = torch.tensor(rowinit, dtype=torch.float32, device=device)
+            rowinit_torch = torch.as_tensor(rowinit, dtype=torch.float32, device=device)
             diff = row_torch - rowinit_torch
             cost_torch += 0.5 * regparam * torch.sum(diff**2)
 
@@ -230,7 +233,37 @@ class EmpiricalJacobian():
    #pixind - the detector pixel index (see self.CostIntensity)
    #method - optimization method.  Must be one of: ['CG' ] - only matters if not self.Torch
    #startpoint - the starting guess for the optimization.  If None, self.JacInit is used
-   def RowOptimize(self, pixind, method='CG', startpoint=None, Torchlearnrate=1.e-3,TorchAdamIters=10,use_lbfgs=True):
+   #TorchMaxIt - max iterations for torch.optim.LBFGS
+   #TorchGradTol - gradient tolerence (stop cirterion) for toch.optim.LBFGS
+   def RowOptimize(self, pixind, method='CG', startpoint=None,TorchMaxIt=10, TorchGradTol=1.e-4):
+      assert False
+      if pixind < 0 or pixind >= self.JacInit.shape[0]:
+         raise IndexError(f"pixind {pixind} is out of bounds for Jacobian with {self.JacInit.shape[0]} rows.")
+      if startpoint is None:
+            startpoint = np.concatenate((np.real(self.JacInit[pixind,:]),np.imag(self.JacInit[pixind,:])))
+      if not self.Torch:  # use numpy
+         ops = {'disp':False, 'maxiter':50}
+         fun = lambda row: self.Cost(row, pixind, return_grad=True)
+         out = mize(fun, startpoint, args=(), method=method, jac=True, options=ops)
+         return((out['x'], out['fun']))
+      else:   # use PyTorch
+         #rowtorch = torch.tensor(startpoint, dtype=torch.float32, device=self.device, requires_grad=True)
+         rowtorch = torch.tensor(startpoint, dtype=torch.float32, device=self.device).clone().detach().requires_grad_(True)
+         optimizer = torch.optim.LBFGS([rowtorch], max_iter=TorchMaxIt, tolerance_grad=TorchGradTol, line_search_fn='strong_wolfe')
+         def closure():
+            optimizer.zero_grad()
+            cost = self.Cost(rowtorch, pixind, return_grad=False)
+            cost.backward()
+            return cost
+         optimizer.step(closure)
+         final_row = rowtorch.detach().cpu().numpy()
+         final_cost = self.Cost(rowtorch.detach(), pixind, return_grad=False).item()
+         return (final_row, final_cost)  #numpy output
+
+
+
+   def _RowOptimize(self, pixind, method='CG', startpoint=None, Torchlearnrate=1.e-3,TorchAdamIters=10,use_lbfgs=True):
+      assert False
       if pixind < 0 or pixind >= self.JacInit.shape[0]:
          raise IndexError(f"pixind {pixind} is out of bounds for Jacobian with {self.JacInit.shape[0]} rows.")
       if startpoint is None:
@@ -329,13 +362,14 @@ class EmpiricalJacobian():
                rowtorch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=True)
             else:
                rowtorch = row
-            real = rowtorch[:na]; imag = rowtorch[na:]
-            complex_row = torch.complex(real, imag)
-            dmp = torch.ones(na, dtype=torch.complex64, device=device)
-            dmp *= torch.exp(1j * torch.tensor(self.defaultDMC, device=device))
-            dmp[actnum] = torch.exp(1j * torch.tensor(actphase, device=device))
-            u = torch.dot(complex_row, dmp)
-            uu = torch.real(u * torch.conj(u))
+            rowtorchreal = rowtorch[:na]; rowtorchimag = rowtorch[na:]
+            dmpr = torch.ones(na, device=device)*np.cos(self.defaultDMC)
+            dmpr[actnum] = np.cos(actphase)
+            dmpi = torch.ones(na, device=device)*np.sin(self.defaultDMC)
+            dmpi[actnum] = np.sin(actphase)
+            ureal = dmpr.dot(rowtorchreal) - dmpi.dot(rowtorchimag)
+            uimag = dmpr.dot(rowtorchimag) + dmpi.dot(rowtorchreal)
+            uu = ureal*ureal + uimag*uimag
             if not return_grad:  # this is needs to be kept in the form of a differentiable torch tensor
                return uu
             else:  # return a numpy array containing the gradient
