@@ -152,16 +152,54 @@ class EmpiricalJacobian():
                self.dataset[kp, kc, kg] = np.real(u*np.conj(u))  # put in the intensity
       np.save(fileWpath,self.dataset)
 
+   #This is simple test function to get the PyTorch optimizers working
+   # row, 1D,  - can be an np.array or a torch.tensor
+   def TestCost(self, row):
+      if not self.Torch:
+         raise Exception("Error: Torch = False.  This for testing stuff in PyTorch.")
+      if isinstance(row, np.ndarray):
+         row = torch.tensor(row, device=self.device, requires_grad=True)
+      else:
+         if isinstance(row,torch.Tensor) and not row.requires_grad:
+            raise Exception("If the input array is a torch.tensor, it must have .requires_grad = True in order to enable optimization.")
+      d = (row - torch.ones(len(row), device=self.device))
+      cost = 0.5*torch.sum(d**2)
+      return(cost)
+
+   def MinTestCost(self, startpoint, TorchMaxIt=5, TorchGradTol=1.e-3):
+      if not self.Torch:
+         raise Exception("Error: Torch = False.  This for testing stuff in PyTorch.")
+      if isinstance(startpoint, np.ndarray):
+            rowtorch = torch.tensor(startpoint, dtype=torch.float32, device=self.device,  requires_grad=True)
+      else:
+            raise TypeError("The starpoint parameter must be an np.array.")
+
+      optimizer = torch.optim.LBFGS([rowtorch], max_iter=TorchMaxIt, tolerance_grad=TorchGradTol, line_search_fn='strong_wolfe')
+      def closure():
+            optimizer.zero_grad()
+            cost = self.TestCost(rowtorch)
+            cost.backward()
+            return cost
+      optimizer.step(closure)
+      final_row = rowtorch.detach().cpu().numpy()
+      final_cost = self.TestCost(rowtorch).item()
+      return (final_row, final_cost)  #numpy output
+
+
+
    #This is a cost function to enable gradient-based optimization of a given row of the Jacobian
    # (see self.IntensityModel).  This assumes the data are stored in the class variable self.dataset
    #row - the vector over whose values the cost function will be optimized
-   #    it is a row of the Jacobian matrix.  It is real valued: [real part, imag part]
+   #  It represents a row of the complex-valued Jacobian matrix, but is real valued: [real part, imag part].
+   #  It can be an np.array or a torch.Tensor with .requires_grad = True
    #pixind - the detector pixel index corresponding to the row number of the Jacobian being optimized
    #regparam - scalar regularization parameter on the square difference between row and nominal value of row
    #centercon - force the imag component of the element corresp. to the central actuator to be zero.
    def Cost(self, row, pixind, regparam=0., centercon=False, return_grad=False):
-      if self.Torch and return_grad:
-         raise Exception("return_grad must be False if self.Torch is True (autograd is employed).")
+      if (not isinstance(row, np.ndarray) and (not isinstance(row, torch.Tensor))):
+         raise ValueError(f"input vector row must be a torch.Tensor or np.ndarray.")
+      if ( isinstance(row, torch.Tensor) and row.requires_grad == False ):
+         raise ValueError("if input vector row is a torch.Tensor it must have .requires_grad = True.")
       if self.dataset is None:
          raise Exception("The dataset needs to be loaded as a member variable.  See self.GetOrMakeIntensityData.")
       if regparam < 0.:
@@ -198,12 +236,12 @@ class EmpiricalJacobian():
             return(cost)
       else: # self.Torch is True  this in PyTorch, leveraging the autograd setup in self.IntensityMdoel
          device = self.device
-         if not isinstance(row, torch.Tensor):
-            row_torch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=True)
+         if isinstance(row, np.ndarray):
+            row_torch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=return_grad)
          else:
             row_torch = row
-         cost_torch = 0.0   ## don't make a new tensor! torch.tensor(0.0, dtype=torch.float32, device=device)
 
+         cost_torch = 0.0   ## don't make a new tensor! torch.tensor(0.0, dtype=torch.float32, device=device)
          for ka in range(nact):
             for kt in range(len(self.angles)):
                ykakt = torch.as_tensor(self.dataset[pixind, ka, kt], dtype=torch.float32, device=device)  # as_tensor avoids making an unneeded copy
@@ -223,8 +261,7 @@ class EmpiricalJacobian():
 
          if return_grad:  #return numpy array because the output is already differentiable
             cost_torch.backward()
-            grad = row_torch.grad.detach().cpu().numpy()
-            return cost_torch.item(), grad
+            return cost_torch.item(), row_torch.grad.detach().cpu().numpy()
          else:
             return cost_torch
 
@@ -232,23 +269,29 @@ class EmpiricalJacobian():
    #This calls optimization routines to optimize a row of the Jacobian
    #pixind - the detector pixel index (see self.CostIntensity)
    #method - optimization method.  Must be one of: ['CG' ] - only matters if not self.Torch
-   #startpoint - the starting guess for the optimization.  If None, self.JacInit is used
+   #startpoint - the starting guess for the optimization.  It reprsents a row of the Jacobian.
+   #If None, self.JacInit is used.  Otherwise It must be a complex-valued np.array
    #TorchMaxIt - max iterations for torch.optim.LBFGS
    #TorchGradTol - gradient tolerence (stop cirterion) for toch.optim.LBFGS
-   def RowOptimize(self, pixind, method='CG', startpoint=None,TorchMaxIt=10, TorchGradTol=1.e-4):
-      assert False
-      if pixind < 0 or pixind >= self.JacInit.shape[0]:
-         raise IndexError(f"pixind {pixind} is out of bounds for Jacobian with {self.JacInit.shape[0]} rows.")
+   def CostMinimize(self, pixind, method='CG', startpoint=None,TorchMaxIt=10, TorchGradTol=1.e-4):
+      if (startpoint is not None) and (not isinstance(startpoint, np.ndarray)):
+         raise ValueError("startpoint must be None or a complex-valued np.array")
       if startpoint is None:
             startpoint = np.concatenate((np.real(self.JacInit[pixind,:]),np.imag(self.JacInit[pixind,:])))
+      else:
+         if not np.iscomplexobj(startpoint):
+            raise ValueError(f"startpoint must be None or a complex-valued np.array.  It is a {type(startpoint)}.")
+         else:
+            startpoint = np.concatenate((np.real(startpoint),np.imag(startpoint)))
+      if pixind < 0 or pixind >= self.JacInit.shape[0]:
+         raise IndexError(f"pixind {pixind} is out of bounds for Jacobian with {self.JacInit.shape[0]} rows.")
       if not self.Torch:  # use numpy
          ops = {'disp':False, 'maxiter':50}
          fun = lambda row: self.Cost(row, pixind, return_grad=True)
          out = mize(fun, startpoint, args=(), method=method, jac=True, options=ops)
          return((out['x'], out['fun']))
       else:   # use PyTorch
-         #rowtorch = torch.tensor(startpoint, dtype=torch.float32, device=self.device, requires_grad=True)
-         rowtorch = torch.tensor(startpoint, dtype=torch.float32, device=self.device).clone().detach().requires_grad_(True)
+         rowtorch = torch.tensor(startpoint, dtype=torch.float32, device=self.device, requires_grad=True)
          optimizer = torch.optim.LBFGS([rowtorch], max_iter=TorchMaxIt, tolerance_grad=TorchGradTol, line_search_fn='strong_wolfe')
          def closure():
             optimizer.zero_grad()
@@ -260,39 +303,6 @@ class EmpiricalJacobian():
          final_cost = self.Cost(rowtorch.detach(), pixind, return_grad=False).item()
          return (final_row, final_cost)  #numpy output
 
-
-
-   def _RowOptimize(self, pixind, method='CG', startpoint=None, Torchlearnrate=1.e-3,TorchAdamIters=10,use_lbfgs=True):
-      assert False
-      if pixind < 0 or pixind >= self.JacInit.shape[0]:
-         raise IndexError(f"pixind {pixind} is out of bounds for Jacobian with {self.JacInit.shape[0]} rows.")
-      if startpoint is None:
-            startpoint = np.concatenate((np.real(self.JacInit[pixind,:]),np.imag(self.JacInit[pixind,:])))
-      if not self.Torch:  # use numpy
-         ops = {'disp':False, 'maxiter':50}
-         fun = lambda row: self.Cost(row, pixind, return_grad=True)
-         out = mize(fun, startpoint, args=(), method=method, jac=True, options=ops)
-         return((out['x'], out['fun']))
-      else:   # use PyTorch
-         rowtorch = torch.tensor(startpoint, dtype=torch.float32, device=self.device, requires_grad=True)
-         optimizer = torch.optim.Adam([rowtorch], lr=Torchlearnrate)
-         for i in range(TorchAdamIters):
-            optimizer.zero_grad()  # Réinitialiser les gradients à chaque itération
-            cost = self.Cost(rowtorch, pixind, return_grad=False)
-            cost.backward()  # Rétropropagation pour calculer les gradients
-            optimizer.step()  # parameter update
-         #mid_result = rowtorch.detach().cpu().numpy()
-         if use_lbfgs:
-              def closure():
-                 optimizer_lbfgs.zero_grad()
-                 cost = self.Cost(rowtorch, pixind, return_grad=False)
-                 cost.backward()
-                 return cost
-              optimizer_lbfgs = torch.optim.LBFGS([rowtorch], max_iter=20, tolerance_grad=1e-5, line_search_fn='strong_wolfe')
-              optimizer_lbfgs.step(closure)
-         final_row = rowtorch.detach().cpu().numpy()
-         final_cost = self.Cost(rowtorch.detach(), pixind, return_grad=False).item()
-         return (final_row, final_cost)  #numpy output
 
    def LoopOverPixels(self):
       self.GetOrMakeIntensityData(fnIntensity,'load')
@@ -318,7 +328,8 @@ class EmpiricalJacobian():
 
    #This returns the intensity for a specified pixel index (1D(
    #row - the row vector containing the estimated jacobian for the pixel in question
-   #   it is a real-valued vector of length of twice the number of actuators (real and imag parts)
+   #   It is a real-valued vector of length of twice the number of actuators (real and imag parts)
+   #   It can be either an np.array or a torch.Tensor with .requires_grad = True
    #actnum - the index of the actuator being modulated
    #actphase - the phase of modulated actuator
    #return_grad - also return the gradient w.r.t to 'row'
@@ -359,9 +370,14 @@ class EmpiricalJacobian():
       else:  #  self.Torch is True, implement the intensity in PyTorch using autograd
             device = self.device
             if isinstance(row, np.ndarray):
-               rowtorch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=True)
+               rowtorch = torch.tensor(row, dtype=torch.float32, device=device, requires_grad=return_grad)
             else:
                rowtorch = row
+               if not isinstance(row, torch.Tensor):
+                  raise TypeError(f"Input vector row must be an np.array or a torch.Tensor. Its type is {type(row).}")
+               if not row.requires_grad:
+                  raise Exception("If input row is a torch.Tensor, it must have .requires_grad = True.")
+
             rowtorchreal = rowtorch[:na]; rowtorchimag = rowtorch[na:]
             dmpr = torch.ones(na, device=device)*np.cos(self.defaultDMC)
             dmpr[actnum] = np.cos(actphase)
@@ -376,6 +392,42 @@ class EmpiricalJacobian():
                uu.backward()
                grad = rowtorch.grad.detach().cpu().numpy()
                return (uu.item(), grad)
+
+   ########################################
+   ## Class EmpiricalJacobian Scrapyard  ##
+   ########################################
+
+   def _RowOptimize(self, pixind, method='CG', startpoint=None, Torchlearnrate=1.e-3,TorchAdamIters=10,use_lbfgs=True):
+      assert False
+      if pixind < 0 or pixind >= self.JacInit.shape[0]:
+         raise IndexError(f"pixind {pixind} is out of bounds for Jacobian with {self.JacInit.shape[0]} rows.")
+      if startpoint is None:
+            startpoint = np.concatenate((np.real(self.JacInit[pixind,:]),np.imag(self.JacInit[pixind,:])))
+      if not self.Torch:  # use numpy
+         ops = {'disp':False, 'maxiter':50}
+         fun = lambda row: self.Cost(row, pixind, return_grad=True)
+         out = mize(fun, startpoint, args=(), method=method, jac=True, options=ops)
+         return((out['x'], out['fun']))
+      else:   # use PyTorch
+         rowtorch = torch.tensor(startpoint, dtype=torch.float32, device=self.device, requires_grad=True)
+         optimizer = torch.optim.Adam([rowtorch], lr=Torchlearnrate)
+         for i in range(TorchAdamIters):
+            optimizer.zero_grad()  # Réinitialiser les gradients à chaque itération
+            cost = self.Cost(rowtorch, pixind, return_grad=False)
+            cost.backward()  # Rétropropagation pour calculer les gradients
+            optimizer.step()  # parameter update
+         #mid_result = rowtorch.detach().cpu().numpy()
+         if use_lbfgs:
+              def closure():
+                 optimizer_lbfgs.zero_grad()
+                 cost = self.Cost(rowtorch, pixind, return_grad=False)
+                 cost.backward()
+                 return cost
+              optimizer_lbfgs = torch.optim.LBFGS([rowtorch], max_iter=20, tolerance_grad=1e-5, line_search_fn='strong_wolfe')
+              optimizer_lbfgs.step(closure)
+         final_row = rowtorch.detach().cpu().numpy()
+         final_cost = self.Cost(rowtorch.detach(), pixind, return_grad=False).item()
+         return (final_row, final_cost)  #numpy output
 
 
 
