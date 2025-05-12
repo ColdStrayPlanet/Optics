@@ -129,8 +129,8 @@ class EFC():
        return pixlist
 
    def DigDominantHole(self, dmc, pixlist, DMconstr=np.pi/4):
-      N = int(np.sqrt(self.SpHi.Nsp))
-      def Cost(pixlist, pmat='dom'):
+      N = int(np.sqrt(self.SpLo.Nsp))
+      def Cost(dmc, pmat='dom'):
          I, gI = self.DMcmd2Intensity(dmc, pmat=pmat, pixlist=pixlist, return_grad=True)
          cost = np.sum(I)
          gcost = np.sum(gI,axis=0)
