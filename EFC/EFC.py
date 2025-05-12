@@ -30,12 +30,12 @@ Reduced = True
 if not Reduced: assert False  # the fplength is problematic
 if Reduced:  #stuff averaged over 2x2 pixels in the image plane
     fpsize //= 2
-    Sxfn = 'ThreeOAP20mmSquareApCgkn33x33_SystemMatrixReducedContrUnits_Ex.npy'  # 'SysMatReduced_LgOAPcg21x21_ContrUnits_Ex.npy'
-    Syfn = 'ThreeOAP20mmSquareApCgkn33x33_SystemMatrixReducedContrUnits_Ey.npy'  # 'SysMatReduced_LgOAPcg21x21_ContrUnits_Ey.npy'
+    Sxfn = 'ThreeOAP20mmSquareApCgkn33x33_SystemMatrixReducedContrUnits_Ex.npy'
+    Syfn = 'ThreeOAP20mmSquareApCgkn33x33_SystemMatrixReducedContrUnits_Ey.npy'
+DomMat = np.load(ospath.join(PropMatLoc,Sxfn));
+CroMat = np.load(ospath.join(PropMatLoc,Syfn));
 
-
-#set things up for a 15x15 DM with its phasor represented by a 33x33 B-spline grid.
-
+#set things up for a 15x15 DM with its phasor represented by a 33x33 B-spline
 s = np.linspace(-0.5, 0.5, 165); xx, yy = np.meshgrid(s,s);
 Delta11 = 1./11; Delta15 = 1./15; Delta21=1./21; Delta33 = 1./31  # setting delta33 to 1/31 is for padding
 #B15 = BS.BivariateCubicSpline(xx.flatten(),yy.flatten(),15,Xmin=-0.5+Delta15,Delta=Delta15)
@@ -69,19 +69,17 @@ class EFC():
       if np.iscomplexobj(dmc): raise ValueError("input param dmc must be real-valued")
       if len(dmc) != self.SpLo.Nsp: raise ValueError(f"input param dmc must have length {self.SpLo.Nsp}. It has length {len(dmc)}.")
       phase = self.SpLo.SplInterp(dmc)
-      if return_grad:
-         dphase = self.SpLo.mat
       phasor = np.exp(1j*phase)
-      if return_grad:
-         dphasor = 1j*(dphase.T*phasor).T
       HiCo = self.SpHi.imat@phasor
-      if return_grad:
-         dHiCo = self.SpHi.imat@dphasor
-         return( (HiCo, dHiCo) )
-      return(None)
+      if not return_grad:
+         return(HiCo)
+      dphase = self.SpLo.mat
+      dphasor = 1j*(dphase.T*phasor).T
+      dHiCo = self.SpHi.imat@dphasor
+      return( (HiCo, dHiCo) )
 
 
-   def DMcmd2DetField(self, dmc, pmat='dom', pixlist=None, return_grad=False):
+   def DMcmd2Field(self, dmc, pmat='dom', pixlist=None, return_grad=False):
       if pmat not in ['dom','cross','cross2']:
          raise ValueError("the string pmat must be one of the allowable choices.")
       if pmat == 'cross2' and self.C2 is None: raise Exception("Cross2PropMat not initialized.")
@@ -103,11 +101,11 @@ class EFC():
    def DMcmd2Intensity(self, dmc, pmat='dom', pixlist=None, return_grad=False):
       if not return_grad:
          field = self.DMcmd2Field(dmc, pmat, pixlist=pixlist, return_grad=False)
-         I = field*np.conj(field)
+         I = np.real(field*np.conj(field))
          return(I)
       else:
-         field, dfield = self.DMcmd2DetField(dmc, pmat, pixlist=pixlist, return_grad=True)
-         I = field*np.conj(field)
+         field, dfield = self.DMcmd2Field(dmc, pmat, pixlist=pixlist, return_grad=True)
+         I = np.real(field*np.conj(field))
          dI = 2*np.real( (dfield.T)*np.conj(field)  ).T
          return( (I, dI) )
 
@@ -132,7 +130,11 @@ class EFC():
 
    def DigDominantHole(self, dmc, pixlist, DMconstr=np.pi/4):
       N = int(np.sqrt(self.SpHi.Nsp))
-      n = N*N
+      def Cost(pixlist, pmat='dom'):
+         I, gI = self.DMcmd2Intensity(dmc, pmat=pmat, pixlist=pixlist, return_grad=True)
+         cost = np.sum(I)
+         gcost = np.sum(gI,axis=0)
+         return((cost, gcost))
       def make_gradient_matrix(N):  # this for the inequality constraints on DM command
           rows = []
           cols = []
@@ -152,15 +154,13 @@ class EFC():
                   data += [-1, 1]
                   row_id += 1
 
-          A = lil_matrix((row_id, N * N))
+          lilmatrix = lil_matrix((row_id, N * N))
           for r, c, d in zip(rows, cols, data):
-              A[r, c] = d
-          return A.tocsr()
-      A = make_gradient_matrix(N)
-      constraint = LinearConstraint(A, -DMconstr, DMconstr)
-
-      f = lambda dmc : self.DMcmd2Intensity(dmc, pmat='dom', pixlist=pixlist, return_grad=True)
+              lilmatrix[r, c] = d
+          return lilmatrix.tocsr()
+      conmat = make_gradient_matrix(N)
+      constraint = LinearConstraint(conmat, -DMconstr, DMconstr)
       ops = {'maxiter':50, 'xtol':1.e-6, 'verbose':2}
-      out = minimize(f, dmc, jac=True, constraints=[constraint], method='trust-constr',options=ops)
+      out = minimize(Cost, dmc, jac=True, constraints=[constraint], method='trust-constr',options=ops)
 
       return out
