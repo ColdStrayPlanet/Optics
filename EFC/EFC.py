@@ -164,3 +164,22 @@ class EFC():
       out = minimize(Cost, dmc, jac=True, constraints=[constraint], method='trust-constr',options=ops)
 
       return out
+
+   #this creates the b-spline basis coefficients corresponding to a linear phase,
+   #  which behaves as an off-axis source.
+   #For now, the off axis beam is displacesd on the x-axis
+   #   - Warning!  this code and BS.BivariateCubicSPline disagree on the
+   #   x and y directions
+   #Together, nc and theta specify the position of the off-axis source
+   #  nc - the number of cycles per pupil (so, the distance from the center will be nc in units of lambda/D)
+   #  thetadeg - (degrees) the "position angle" of the source.  +x corresponds to zero, +y 90
+   def SplCoefs4LinearPhase(self, nc, thetadeg):
+      x = self.SpHi.x
+      y = self.SpHi.y
+      nc *= 2*np.pi/(x.max() - x.min())  #  scale so that nc = 1 is once cycle per 2pi rad
+      kx = nc*np.cos(thetadeg*np.pi/180)
+      ky = nc*np.sin(thetadeg*np.pi/180)
+      linearphase = kx*x + ky*y
+      phasor = np.exp(1j*linearphase)
+      spco = self.SpHi.GetSplCoefs(phasor)
+      return spco
