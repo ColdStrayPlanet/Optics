@@ -19,8 +19,8 @@ if machine == "homeLinux":
     MySplineToolsLocation = "/home/rfrazin/Py/Optics"
     PropMatLoc = "/home/rfrazin/Py/EFCSimData/"
 elif machine == 'officeWindows':
-    MySplineToolsLocation = "E:/Python/Optics"
-    PropMatLoc = "E:/MyOpticalSetups/EFC Papers/DataArrays"
+    MySplineToolsLocation = "F:/Python/Optics"
+    PropMatLoc = "F:/MyOpticalSetups/EFC Papers/DataArrays"
 syspath.insert(0, MySplineToolsLocation)
 import Bspline3 as BS  # this module is in MySplineToolsLocation
 
@@ -64,12 +64,19 @@ class EFC():
    #dmc - the DM command (flattened), phase units are assumed.  Must have len == SpLo.Nsp
    #SpLo - Bspline3.BivariateCubicSpline object corresonding to the DM height interpolation
    #SpHi - Bspline3.BivariateCubicSpline object used to represent the continuous DM phasor on the Bspline basis representing the pupil field
-   def DMcmd2PupilCoefs(self, dmc, return_grad=False):
+   #return_grad - w.r.t. to dmc
+   #OffAxPhasor - this applies a phasor. Designed to simulate off-axis sources.
+   #   Not compatible with return_grad.   See self.LinearPhaseForOffAxisSource
+   def DMcmd2PupilCoefs(self, dmc, return_grad=False, OffAxPhasor=None):
       if dmc.ndim !=1: raise ValueError(f"input param dmc must have 1 dimension. It has shape {dmc.shape}.")
       if np.iscomplexobj(dmc): raise ValueError("input param dmc must be real-valued")
       if len(dmc) != self.SpLo.Nsp: raise ValueError(f"input param dmc must have length {self.SpLo.Nsp}. It has length {len(dmc)}.")
       phase = self.SpLo.SplInterp(dmc)
       phasor = np.exp(1j*phase)
+      if OffAxPhasor is not None :
+         if return_grad: raise ValueError("return_grad = True and a value for OffAxPhasor are not compatible.")
+         if phasor.shape != OffAxPhasor.shape: raise ValueError(f"OffAxPhasor must have shape = {phasor.shape}")
+         phasor *= OffAxPhasor
       HiCo = self.SpHi.imat@phasor
       if not return_grad:
          return(HiCo)
@@ -79,7 +86,8 @@ class EFC():
       return( (HiCo, dHiCo) )
 
 
-   def DMcmd2Field(self, dmc, pmat='dom', pixlist=None, return_grad=False):
+   def DMcmd2Field(self, dmc, pmat='dom', pixlist=None, return_grad=False,  OffAxPhasor=None):
+      if return_grad and (OffAxPhasor is not None): raise ValueError("return_grad = True and a value for OffAxPhasor are not compatible.")
       if pmat not in ['dom','cross','cross2']:
          raise ValueError("the string pmat must be one of the allowable choices.")
       if pmat == 'cross2' and self.C2 is None: raise Exception("Cross2PropMat not initialized.")
@@ -89,7 +97,7 @@ class EFC():
       if pixlist is not None:
          Sys = Sys[pixlist,:]
       if not return_grad:
-         co = self.DMcmd2PupilCoefs(dmc)
+         co = self.DMcmd2PupilCoefs(dmc, OffAxPhasor=OffAxPhasor)
          field = Sys@co
          return(field)
       else: # return the Jacobian, too
@@ -98,9 +106,10 @@ class EFC():
          jac = Sys@dco
          return ( (field, jac) )
 
-   def DMcmd2Intensity(self, dmc, pmat='dom', pixlist=None, return_grad=False):
+   def DMcmd2Intensity(self, dmc, pmat='dom', pixlist=None, return_grad=False, OffAxPhasor=None):
+      if return_grad and (OffAxPhasor is not None): raise ValueError("return_grad = True and a value for OffAxPhasor are not compatible.")
       if not return_grad:
-         field = self.DMcmd2Field(dmc, pmat, pixlist=pixlist, return_grad=False)
+         field = self.DMcmd2Field(dmc, pmat, pixlist=pixlist, return_grad=False, OffAxPhasor=OffAxPhasor)
          I = np.real(field*np.conj(field))
          return(I)
       else:
@@ -160,10 +169,19 @@ class EFC():
           return lilmatrix.tocsr()
       conmat = make_gradient_matrix(N)
       constraint = LinearConstraint(conmat, -DMconstr, DMconstr)
-      ops = {'maxiter':50, 'xtol':1.e-6, 'verbose':2}
-      out = minimize(Cost, dmc, jac=True, constraints=[constraint], method='trust-constr',options=ops)
+      interms  = []  # list of intermediate solutions
+      costvals = []
+      def mycallback(xk, state=None):
+         interms.append( xk.copy())
+         costvals.append(state.fun)
+         return(None)
 
-      return out
+
+      ops = {'maxiter':3000, 'xtol':1.e-9, 'gtol':1.e-9, 'verbose':2}
+      out = minimize(Cost, dmc, jac=True, method='trust-constr',constraints=[constraint],
+                     callback=mycallback, options=ops)
+
+      return((out,interms,costvals))
 
    #this creates the b-spline basis coefficients corresponding to a linear phase,
    #  which behaves as an off-axis source.
@@ -173,13 +191,20 @@ class EFC():
    #Together, nc and theta specify the position of the off-axis source
    #  nc - the number of cycles per pupil (so, the distance from the center will be nc in units of lambda/D)
    #  thetadeg - (degrees) the "position angle" of the source.  +x corresponds to zero, +y 90
-   def SplCoefs4LinearPhase(self, nc, thetadeg):
-      x = self.SpHi.x
-      y = self.SpHi.y
+   #output must be 'SplCoefs' or 'Phasor' - depending on the desired output
+   def LinearPhaseForOffAxisSource(self, nc, thetadeg, output= 'SplCoefs'):
+      ValidOutputs = ['SplCoefs','Phasor']
+      if output not in ValidOutputs:
+         raise ValueError(f"Invalid value for output paramer. Must be in {ValidOutputs}.")
+      y = self.SpHi.x          # this for consistency with the simulation grid
+      x = self.SpHi.y*( - 1.0) # this for consistency with the simulation grid
       nc *= 2*np.pi/(x.max() - x.min())  #  scale so that nc = 1 is once cycle per 2pi rad
       kx = nc*np.cos(thetadeg*np.pi/180)
       ky = nc*np.sin(thetadeg*np.pi/180)
       linearphase = kx*x + ky*y
       phasor = np.exp(1j*linearphase)
-      spco = self.SpHi.GetSplCoefs(phasor)
-      return spco
+      if output == 'Phasor':
+         return phasor
+      if output == 'SplCoefs':
+         spco = self.SpHi.GetSplCoefs(phasor)
+         return spco
