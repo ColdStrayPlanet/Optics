@@ -137,7 +137,7 @@ class EFC():
                pixlist.append(ff(r,c))
        return pixlist
 
-   def DigDominantHole(self, dmc, pixlist, DMconstr=np.pi/4):
+   def DigDominantHole(self, dmc, pixlist, DMconstr=np.pi/3):
       N = int(np.sqrt(self.SpLo.Nsp))
       def Cost(dmc, pmat='dom'):
          I, gI = self.DMcmd2Intensity(dmc, pmat=pmat, pixlist=pixlist, return_grad=True)
@@ -177,7 +177,7 @@ class EFC():
          return(None)
 
 
-      ops = {'maxiter':3000, 'xtol':1.e-9, 'gtol':1.e-9, 'verbose':2}
+      ops = {'maxiter':2000, 'xtol':1.e-9, 'gtol':1.e-9, 'verbose':2}
       out = minimize(Cost, dmc, jac=True, method='trust-constr',constraints=[constraint],
                      callback=mycallback, options=ops)
 
