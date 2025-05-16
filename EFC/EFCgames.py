@@ -12,12 +12,41 @@ import pickle
 import EFC
 
 with open('Stuff05152025.pickle','rb') as fp: stuff = pickle.load(fp); del(fp)
-
-
 A = EFC.EFC(EFC.B21, EFC.B33, EFC.DomMat, EFC.CroMat)
+sols45  = stuff['interm45']; #intermediate solutions
+solsXax = stuff['intermXax']
+cost45  = stuff['cost45']  # objective fcn values
+costAx  = stuff['costXax']
+pl45 =  stuff['pixlist45d']  # list of dark hole pixels
+plXax = stuff['pixlistXax']
+
+PhasorXax = A.LinearPhaseForOffAxisSource(5.2, 0. , output='Phasor')
+Phasor45  = A.LinearPhaseForOffAxisSource(7.0, 45., output='Phasor')
+
+CostCross45 = [];  CostCrossXax = []  # total cross intensities in dark hole
+IoffAxXax = []; IoffAx45  = [] # peak off-axis intensities
+
+
+for k in range(len(sols45)):
+   CostCross45.append( np.sum(A.DMcmd2Intensity(sols45[k ], 'cross', pixlist=pl45 )))
+   IoffAx45.append(np.max(A.DMcmd2Intensity(sols45[k], pmat='dom' ,pixlist=pl45, OffAxPhasor=Phasor45)))
+for k in range(len(solsXax)):
+   CostCrossXax.append(np.sum(A.DMcmd2Intensity(solsXax[k], 'cross', pixlist=plXax)))
+   IoffAxXax.append(np.max(A.CMcmd2Intensity(solsXax[k],pmat='dom',pixlist=plXax,OffAxPhasor=PhasorXax)))
 
 
 
 
 
-plt.figure(); plt.plot(np.log10(stuff['cost45'])-2.35,'ko-',np.log10(stuff['costXax'])-2.35,'bo-');
+#%%
+Idh45   = A.DMcmd2Intensity(sols45[-1],'dom').reshape((256,256));
+Ioa45dh  = A.DMcmd2Intensity(sols45[-1],pmat='dom',OffAxPhasor=Phasor45).reshape((256,256));
+IdhXax  = A.DMcmd2Intensity(solsXax[-1],'dom').reshape((256,256));
+IoaXaxdh = A.DMcmd2Intensity(solsXax[-1],pmat='dom',OffAxPhasor=PhasorXax).reshape((256,256));
+
+#%%
+plt.figure();plt.plot(np.log10(cost45)-2.35,'ko-', np.log10(CostCross45 )-2.35,'bo-');
+plt.title('45deg box');plt.xlabel('CG iteration');plt.ylabel('mean intensity (contrast units)');
+
+plt.figure();plt.plot(np.log10(costAx)-2.35,'ko-', np.log10(CostCrossXax)-2.35,'bo-');
+plt.title('X-axis box');plt.xlabel('CG iteration');plt.ylabel('mean intensity (contrast units)');
