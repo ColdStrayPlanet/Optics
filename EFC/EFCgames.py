@@ -83,8 +83,15 @@ for k in range(len(solsXax)):
    CostCrossXax.append(np.sum(A.DMcmd2Intensity(solsXax[k], 'cross', pixlist=plXax)))
    IoffAxXax.append(np.max(A.DMcmd2Intensity(solsXax[k],pmat='dom',pixlist=plXax,OffAxPhasor=PhasorXax)))
 #%%  plots of intensity vs. CG iteration
-plt.figure();plt.plot(np.log10(cost45)-2.35,'ko-', np.log10(CostCross45 )-2.35,'bo-');plt.title('45deg box');plt.xlabel('CG iteration');plt.ylabel('mean intensity (contrast units)');
-plt.figure();plt.plot(np.log10(costAx)-2.35,'ko-', np.log10(CostCrossXax)-2.35,'bo-');plt.title('X-axis box');plt.xlabel('CG iteration');plt.ylabel('mean intensity (contrast units)');
+plt.figure();plt.plot(np.log10(cost45)-2.35,'ko-',label='primary');
+plt.plot(np.log10(CostCross45 )-2.35,'bo-',label='secondary');
+plt.plot(np.log10(IoffAx45) - 11,'rx:',label='planet');
+plt.legend(loc='upper right');
+plt.title('45deg box');plt.xlabel('CG iteration');plt.ylabel('mean intensity (contrast units)');
+
+plt.figure();plt.plot(np.log10(costAx)-2.35,'ko-',label='primary'),
+plt.plot(np.log10(CostCrossXax)-2.35,'bo-',label='secondary'); plt.legend(loc='upper right');
+plt.title('X-axis box');plt.xlabel('CG iteration');plt.ylabel('mean intensity (contrast units)');
 
 
 #%%
