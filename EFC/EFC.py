@@ -25,17 +25,17 @@ syspath.insert(0, MySplineToolsLocation)
 import Bspline3 as BS  # this module is in MySplineToolsLocation
 
 fpsize = 512  # size of focal plane in pixels
-fplength = 20. #length of detector in mm
+fplength = 1.996 #length of detector in mm
 Reduced = True
 if not Reduced: assert False  # the fplength is problematic
 if Reduced:  #stuff averaged over 2x2 pixels in the image plane
     fpsize //= 2
-    Sxfn = 'ThreeOAP20mmSquareApCgkn33x33_SystemMatrixReducedContrUnits_Ex.npy'
-    Syfn = 'ThreeOAP20mmSquareApCgkn33x33_SystemMatrixReducedContrUnits_Ey.npy'
+    Sxfn = 'SysMatNorm_Xx_BigBeam2Cg256x256_Lam0.9_33x33.npy'
+    Syfn = 'SysMatNorm_Xy_BigBeam2Cg256x256_Lam0.9_33x33.npy'
 DomMat = np.load(ospath.join(PropMatLoc,Sxfn));
 CroMat = np.load(ospath.join(PropMatLoc,Syfn));
 
-#set things up for a 15x15 DM with its phasor represented by a 33x33 B-spline
+#set things up for a 21x21 DM with its phasor represented by a 33x33 B-spline
 s = np.linspace(-0.5, 0.5, 165); xx, yy = np.meshgrid(s,s);
 Delta11 = 1./11; Delta15 = 1./15; Delta21=1./21; Delta33 = 1./31  # setting delta33 to 1/31 is for padding
 #B15 = BS.BivariateCubicSpline(xx.flatten(),yy.flatten(),15,Xmin=-0.5+Delta15,Delta=Delta15)
@@ -65,7 +65,7 @@ class EFC():
    #SpLo - Bspline3.BivariateCubicSpline object corresonding to the DM height interpolation
    #SpHi - Bspline3.BivariateCubicSpline object used to represent the continuous DM phasor on the Bspline basis representing the pupil field
    #return_grad - w.r.t. to dmc
-   #OffAxPhasor - this applies a phasor. Designed to simulate off-axis sources.
+   #OffAxPhasor - this applies a phasor designed to simulate off-axis sources.
    #   Not compatible with return_grad.   See self.LinearPhaseForOffAxisSource
    def DMcmd2PupilCoefs(self, dmc, return_grad=False, OffAxPhasor=None):
       if dmc.ndim !=1: raise ValueError(f"input param dmc must have 1 dimension. It has shape {dmc.shape}.")
