@@ -79,9 +79,18 @@ plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{xy}|$");plt.xlabe
 plt.figure();plt.imshow(np.abs(PupYx), extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
 plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{yx}|$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
 
-#%% Full Field Intensities
+#%%
 Phasorax = A.LinearPhaseForOffAxisSource(6.1, 0. , output='Phasor')
 Phasor45  = A.LinearPhaseForOffAxisSource(7.2, 45., output='Phasor')
+#functions for modulated intensities
+Cd45 = lambda cmd: np.mean(A.DMcmd2Intensity(DHinfo['sols45'][-1] +cmd, 'dom', pixlist=DHinfo['pl45'] ))
+Cc45 = lambda cmd: np.mean(A.DMcmd2Intensity(DHinfo['sols45'][-1] +cmd, 'cross', pixlist=DHinfo['pl45'] ))
+Cdax = lambda cmd: np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][-1] + cmd, 'dom', pixlist=DHinfo['plax'] ))
+Ccax = lambda cmd: np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][-1] +cmd, 'cross', pixlist=DHinfo['plax'] ))
+Ioa45  = lambda cmd: np.max(A.DMcmd2Intensity(DHinfo['sols45'][-1] + cmd, pmat='dom' ,pixlist=DHinfo['pl45'], OffAxPhasor=Phasor45))
+Ioaax = lambda cmd: np.max(A.DMcmd2Intensity(DHinfo['solsxa'][-1] + cmd ,pmat='dom',pixlist=DHinfo['plax'], OffAxPhasor=Phasorax))
+cmddom = lambda  :  0.002*np.pi*(np.random.rand(441) - 0.5)
+cmdcro = lambda  :   0.02*np.pi*(np.random.rand(441) - 0.5)
 
 I0    = A.DMcmd2Intensity(0*DHinfo['sols45'][-1],'dom'  ).reshape((256,256));
 I0c   = A.DMcmd2Intensity(0*DHinfo['sols45'][-1],'cross').reshape((256,256));
@@ -93,6 +102,37 @@ IdhXax   = A.DMcmd2Intensity(DHinfo['solsxa'][-1],'dom'  ).reshape((256,256));
 IdhXaxc  = A.DMcmd2Intensity(DHinfo['solsxa'][-1],'cross').reshape((256,256));
 IoaXaxdh = A.DMcmd2Intensity(DHinfo['solsxa'][-1],pmat='dom',OffAxPhasor=Phasorax).reshape((256,256));
 
+#lambda functions for random modulation
+cmddom = lambda  :  0.002*np.pi*(np.random.rand(len(sol45)) - 0.5)
+cmdcro = lambda  :   0.02*np.pi*(np.random.rand(len(sol45)) - 0.5)
+Nmodulations = 50
+Ccromod45  = []
+Cdommod45  = []
+CcromodXax = []
+CdommodXax = []
+Imodoa45   = []
+ImodoaXax  = []
+for k in range(Nmodulations):
+   cd = cmddom();
+   if k == 0:
+      cd *= 0.
+   CdommodXax.append(CdXax(cd))
+   CcromodXax.append(CcXax(cd))
+   ImodoaXax.append(IoaXax(cd))
+CdommodXax = np.array(CdommodXax)
+CcromodXax = np.array(CcromodXax)
+ImodoaXax  = np.array(ImodoaXax)
+print([CdommodXax[0], CcromodXax[0], ImodoaXax[0] ])
+#%%
+plt.figure();
+plt.plot(CdommodXax,'ko', label='Primary');
+plt.plot(CcromodXax*1.e4,'rx', label='1.e4*Secondary');
+plt.plot(ImodoaXax*5.e-9, 'g*',label='5.e-9 Planet' );
+plt.legend(loc='upper left'); plt.title('Random Modulation about DH Command');
+plt.xlabel('modulation trial');plt.ylabel('Intensity (contrast)');
+
+
+#%%
 #plt.figure(); plt.imshow(np.log10(I0[100:180,100:180] + 1.e-6) ,origin='lower',cmap='coolwarm');plt.colorbar();
 plt.figure(); plt.imshow(np.log10(IdhXax[100:180,100:180] + 1.e-10) ,origin='lower',cmap='coolwarm');plt.colorbar();
 plt.figure(); plt.imshow(np.log10(Idh45[100:180,100:180] + 1.e-10) ,origin='lower',cmap='coolwarm');plt.colorbar();
