@@ -101,27 +101,46 @@ Cdax = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] 
 Ccax = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, 'cross', pixlist=DHinfo['plax'] ))
 Ioa45  = lambda soldex, cmd: np.max(A.DMcmd2Intensity(DHinfo['sols45' ][soldex] + cmd, pmat='dom' ,pixlist=DHinfo['pl45'], OffAxPhasor=Phasor45))
 Ioaax = lambda soldex, cmd : np.max(A.DMcmd2Intensity(DHinfo['solsxa' ][soldex] + cmd ,pmat='dom',pixlist=DHinfo['plax'], OffAxPhasor=Phasorax))
-cmddom = lambda  :  0.002*np.pi*(np.random.rand(len(DHinfo['sols45'][-1])) - 0.5)
-cmdcro = lambda  :   0.02*np.pi*(np.random.rand(len(DHinfo['sols45'][-1])) - 0.5)
 
-#calculate intensity as a function of iteration
-trunc = lambda x: float(np.format_float_scientific(x, precision=3))
-Ccro45  = []
-Cdom45  = []
-Ccroax = []
-Cdomax = []
-for k in range(len(DHinfo['sols45'])):
-    Ccro45.append(trunc(Cc45(k, np.zeros(len(DHinfo['sols45'][0]),))))
-    Cdom45.append(trunc(Cd45(k, np.zeros(len(DHinfo['sols45'][0]),))))
-Ccro45 = np.array(list(dict.fromkeys(Ccro45)))  #not every iteration makes progress.  This  removes identical costs (intensities) while preserving the order.
-Cdom45 = np.array(list(dict.fromkeys(Cdom45)))
-total45 = Ccro45 + Cdom45
-for k in range(len(DHinfo['solsxa'])):
-    Ccroax.append(trunc(Ccax(k, np.zeros(len(DHinfo['sols45'][0]),))))
-    Cdomax.append(trunc(Cdax(k, np.zeros(len(DHinfo['sols45'][0]),))))
-Ccroax = np.array(Ccroax)
-Cdomax = np.array(Cdomax)
-totalax = Ccroax + Cdomax
+load_iteration_intensities = True
+if load_iteration_intensities:
+   with open("IterationIntensities_01082026.pickle","rb") as fp: ItInt = pickle.load(fp)
+   Cdom45 = ItInt['Cdom45']; Ccro45 = ItInt['Ccro45'];
+   Cdomxa = ItInt['Cdomxa']; Ccroxa = ItInt['Ccroxa']
+else: #calculate intensity as a function of iteration.  This takes about 10 min
+   trunc = lambda x: float(np.format_float_scientific(x, precision=5))
+   Ccro45  = []
+   Cdom45  = []
+   Ccroxa = []
+   Cdomxa = []
+   for k in range(len(DHinfo['sols45'])):
+       Ccro45.append(trunc(Cc45(k, np.zeros(len(DHinfo['sols45'][0]),))))
+       Cdom45.append(trunc(Cd45(k, np.zeros(len(DHinfo['sols45'][0]),))))
+   if False:  #remove identical costs. Problem: the two arrays have different lengths due to less sensitivity of the secondary field.
+      Ccro45 = np.array(list(dict.fromkeys(Ccro45)))  #not every iteration makes progress.  This  removes identical costs (intensities) while preserving the order.
+      Cdom45 = np.array(list(dict.fromkeys(Cdom45)))
+   else:  Ccro45 = np.array(Ccro45);  Cdom45 = np.array(Cdom45)
+   for k in range(len(DHinfo['solsxa'])):
+       Ccroxa.append(trunc(Ccax(k, np.zeros(len(DHinfo['sols45'][0]),))))
+       Cdomxa.append(trunc(Cdax(k, np.zeros(len(DHinfo['sols45'][0]),))))
+   Ccroxa = np.array(Ccroxa); Cdomxa = np.array(Cdomxa)
+
+#make iteration figures
+save_it_figs=False
+plt.figure(); plt.title("Dark Hole Intensity Vs. Iteration");
+plt.plot(np.log10(Cdom45),'ko-',linewidth=3, label="Primary");
+plt.plot(np.log10(Ccro45),'gx:',linewidth=2, label="Secondary");
+plt.plot(np.log10(Cdom45+Ccro45),'r-', linewidth=1, label="Total");
+plt.legend(loc='upper right');
+plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
+if save_it_figs: pass
+plt.figure()
+plt.plot(np.log10(Cdomxa),'ko-',linewidth=3,label="Primary");
+plt.plot(np.log10(Ccroxa),'gx:',linewidth=2,label="Secondary");
+plt.plot(np.log10(Cdomxa+Ccroxa),'r-',linewidth=1, label="Total");
+plt.legend(loc='upper right');
+plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
+
 
 #%%
 
