@@ -11,20 +11,18 @@ from os.path import join
 import pickle
 import EFC as EFCm
 
-
-#%%  Make dark holes.  Store iteration info
+#%% load or calculate the dark hole solutions
 lamD = 5.89 # "lambda/D" in pixel units
 A = EFCm.EFC(EFCm.B21, EFCm.B33, EFCm.DomMat, EFCm.CroMat)
-
-#%% make the the iteration figures
-with open("DHinfo12172025.pickle","rb") as fp: DHinfo = pickle.load(fp)
 loadDHinfo = True
-if not loadDHinfo :  # do the optimizations
+if loadDHinfo:
+   with open("DHinfo12172025.pickle","rb") as fp: DHinfo = pickle.load(fp)
+else:  # do the optimizations
    pl45 = A.MakePixList( np.round(128 + lamD*np.array([3,7,3,7]) ).astype('int') ) #pixel lists for dark holes
    plxa = A.MakePixList( np.round(128 + lamD*np.array([3,7,-2,2])).astype('int') )
    print(f"The dark holes have {len(pl45)} and {len(plxa)} pixels.")
-   (out45, sols45, cost45) = A.DigDominantHole(np.zeros((441,)), pl45, DMconstr=np.pi/2)
-   (outxa, solsxa, costxa) = A.DigDominantHole(np.zeros((441,)), plxa, DMconstr=np.pi/2)
+   (out45, sols45, cost45) = A.DigDominantHole(np.zeros(441,), pl45, DMconstr=np.pi/2)
+   (outxa, solsxa, costxa) = A.DigDominantHole(np.zeros(441,), plxa, DMconstr=np.pi/2)
    cost45 = np.array(DHinfo['cost45'])/len(DHinfo['pl45']) # mean intensity in DH
    costxa = np.array(DHinfo['costxa'])/len(DHinfo['plxa'])
    ccro45 = []; ccroxa = [] # secondary mean intensities
@@ -79,22 +77,12 @@ plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{xy}|$");plt.xlabe
 plt.figure();plt.imshow(np.abs(PupYx), extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
 plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{yx}|$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
 
-#%%
+#%%  full field intensities
 Phasorax = A.LinearPhaseForOffAxisSource(6.1, 0. , output='Phasor')
 Phasor45  = A.LinearPhaseForOffAxisSource(7.2, 45., output='Phasor')
-#functions for modulated intensities
-Cd45 = lambda cmd: np.mean(A.DMcmd2Intensity(DHinfo['sols45'][-1] +cmd, 'dom', pixlist=DHinfo['pl45'] ))
-Cc45 = lambda cmd: np.mean(A.DMcmd2Intensity(DHinfo['sols45'][-1] +cmd, 'cross', pixlist=DHinfo['pl45'] ))
-Cdax = lambda cmd: np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][-1] + cmd, 'dom', pixlist=DHinfo['plax'] ))
-Ccax = lambda cmd: np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][-1] +cmd, 'cross', pixlist=DHinfo['plax'] ))
-Ioa45  = lambda cmd: np.max(A.DMcmd2Intensity(DHinfo['sols45'][-1] + cmd, pmat='dom' ,pixlist=DHinfo['pl45'], OffAxPhasor=Phasor45))
-Ioaax = lambda cmd: np.max(A.DMcmd2Intensity(DHinfo['solsxa'][-1] + cmd ,pmat='dom',pixlist=DHinfo['plax'], OffAxPhasor=Phasorax))
-cmddom = lambda  :  0.002*np.pi*(np.random.rand(441) - 0.5)
-cmdcro = lambda  :   0.02*np.pi*(np.random.rand(441) - 0.5)
 
 I0    = A.DMcmd2Intensity(0*DHinfo['sols45'][-1],'dom'  ).reshape((256,256));
 I0c   = A.DMcmd2Intensity(0*DHinfo['sols45'][-1],'cross').reshape((256,256));
-
 Idh45    = A.DMcmd2Intensity(DHinfo['sols45'][-1],'dom'  ).reshape((256,256));
 Idh45c   = A.DMcmd2Intensity(DHinfo['sols45'][-1],'cross').reshape((256,256));
 Ioa45dh  = A.DMcmd2Intensity(DHinfo['sols45'][-1],pmat='dom',OffAxPhasor=Phasor45).reshape((256,256));
@@ -102,33 +90,69 @@ IdhXax   = A.DMcmd2Intensity(DHinfo['solsxa'][-1],'dom'  ).reshape((256,256));
 IdhXaxc  = A.DMcmd2Intensity(DHinfo['solsxa'][-1],'cross').reshape((256,256));
 IoaXaxdh = A.DMcmd2Intensity(DHinfo['solsxa'][-1],pmat='dom',OffAxPhasor=Phasorax).reshape((256,256));
 
+#%%functions for modulated intensities
+# soldex = -1 for the DH command itself. soldex is set to previous values for earlier iterations
+# cmd is an additive command, used for modulations about a given iteration
+Phasorax = A.LinearPhaseForOffAxisSource(6.1, 0. , output='Phasor')
+Phasor45  = A.LinearPhaseForOffAxisSource(7.2, 45., output='Phasor')
+Cd45 = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['sols45'][soldex] + cmd, 'dom', pixlist=DHinfo['pl45'] ))
+Cc45 = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['sols45'][soldex] + cmd, 'cross', pixlist=DHinfo['pl45'] ))
+Cdax = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, 'dom', pixlist=DHinfo['plax'] ))
+Ccax = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, 'cross', pixlist=DHinfo['plax'] ))
+Ioa45  = lambda soldex, cmd: np.max(A.DMcmd2Intensity(DHinfo['sols45' ][soldex] + cmd, pmat='dom' ,pixlist=DHinfo['pl45'], OffAxPhasor=Phasor45))
+Ioaax = lambda soldex, cmd : np.max(A.DMcmd2Intensity(DHinfo['solsxa' ][soldex] + cmd ,pmat='dom',pixlist=DHinfo['plax'], OffAxPhasor=Phasorax))
+cmddom = lambda  :  0.002*np.pi*(np.random.rand(len(DHinfo['sols45'][-1])) - 0.5)
+cmdcro = lambda  :   0.02*np.pi*(np.random.rand(len(DHinfo['sols45'][-1])) - 0.5)
+
+#calculate intensity as a function of iteration
+trunc = lambda x: float(np.format_float_scientific(x, precision=3))
+Ccro45  = []
+Cdom45  = []
+Ccroax = []
+Cdomax = []
+for k in range(len(DHinfo['sols45'])):
+    Ccro45.append(trunc(Cc45(k, np.zeros(len(DHinfo['sols45'][0]),))))
+    Cdom45.append(trunc(Cd45(k, np.zeros(len(DHinfo['sols45'][0]),))))
+Ccro45 = np.array(list(dict.fromkeys(Ccro45)))  #not every iteration makes progress.  This  removes identical costs (intensities) while preserving the order.
+Cdom45 = np.array(list(dict.fromkeys(Cdom45)))
+total45 = Ccro45 + Cdom45
+for k in range(len(DHinfo['solsxa'])):
+    Ccroax.append(trunc(Ccax(k, np.zeros(len(DHinfo['sols45'][0]),))))
+    Cdomax.append(trunc(Cdax(k, np.zeros(len(DHinfo['sols45'][0]),))))
+Ccroax = np.array(Ccroax)
+Cdomax = np.array(Cdomax)
+totalax = Ccroax + Cdomax
+
+#%%
+
 #lambda functions for random modulation
-cmddom = lambda  :  0.002*np.pi*(np.random.rand(len(sol45)) - 0.5)
-cmdcro = lambda  :   0.02*np.pi*(np.random.rand(len(sol45)) - 0.5)
+cmddom = lambda  :  0.001*np.pi*(np.random.rand(len(DHinfo['sols45'][-1])) - 0.5)
+cmdcro = lambda  :   0.01*np.pi*(np.random.rand(len(DHinfo['sols45'][-1])) - 0.5)
+# calculate intensities with random modulation
 Nmodulations = 50
 Ccromod45  = []
 Cdommod45  = []
-CcromodXax = []
-CdommodXax = []
+Ccromodax = []
+Cdommodax = []
 Imodoa45   = []
-ImodoaXax  = []
+Imodoaax  = []
 for k in range(Nmodulations):
    cd = cmddom();
    if k == 0:
       cd *= 0.
-   CdommodXax.append(CdXax(cd))
-   CcromodXax.append(CcXax(cd))
-   ImodoaXax.append(IoaXax(cd))
-CdommodXax = np.array(CdommodXax)
-CcromodXax = np.array(CcromodXax)
-ImodoaXax  = np.array(ImodoaXax)
-print([CdommodXax[0], CcromodXax[0], ImodoaXax[0] ])
-#%%
-plt.figure();
-plt.plot(CdommodXax,'ko', label='Primary');
-plt.plot(CcromodXax*1.e4,'rx', label='1.e4*Secondary');
-plt.plot(ImodoaXax*5.e-9, 'g*',label='5.e-9 Planet' );
-plt.legend(loc='upper left'); plt.title('Random Modulation about DH Command');
+   Cdommodax.append(Cdax(-1, cd))
+   Ccromodax.append(Ccax(-1, cd))
+   Imodoaax.append(Ioaax(-1, cd))
+Cdommodax = np.array(Cdommodax)
+Ccromodax = np.array(Ccromodax)
+Imodoaax  = np.array(Imodoaax)
+print(f"DH primary intensity:{Cdommodax[0]}, DH secondary intensity:{Ccromodax[0]}, Off-axis source intensity: {Imodoaax[0]}" )
+
+plt.figure();  # figure showing modulation about DH command
+plt.plot(Cdommodax,'ko', label='Primary');
+plt.plot(Ccromodax*25.,'rx', label='25*Secondary');
+plt.plot(Imodoaax*2.e-9, 'g*',label='5.e-9 Planet' );
+plt.legend(loc='lower right'); plt.title('Random Modulation about DH Command');
 plt.xlabel('modulation trial');plt.ylabel('Intensity (contrast)');
 
 
