@@ -30,6 +30,29 @@ else:  # do the optimizations
       ccro45.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['pl45'])))
    for sol in DHinfo['solsxa']:
       ccroxa.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['plxa'])))
+#%% show spline columumn 976 ~ (29,19) of the matrices.  Filenames such as Kn29dand19d_Exx.jpg
+kn = 976
+fnyx = join("../..", "EFCSimData/SysMatNorm_Yx_BigBeam2Cg256x256_Lam0.9_33x33.npy")
+fnyy = join("../..", "EFCSimData/SysMatNorm_Yy_BigBeam2Cg256x256_Lam0.9_33x33.npy")
+Bx = np.load(fnyx, mmap_mode='r');  By = np.load(fnyy, mmap_mode='r');
+Exxkn = A.SysD[:,kn].reshape((256,256))
+Exykn = A.SysC[:,kn].reshape((256,256))
+Eyxkn = Bx[:,kn].reshape((256,256))
+Eyykn = By[:,kn].reshape((256,256))
+
+norm = np.abs(Exxkn).max()
+bD = r'\mathbf{D}' # raw string
+ext = [-1.,1.,-1.,1.] #image plane in mm
+plt.figure(); plt.imshow(np.abs(Exxkn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
+plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{xx}}[:,976]|$'); #raw f-string
+plt.figure(); plt.imshow(np.abs(Exykn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
+plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{xy}}[:,976]|$'); #raw f-string
+plt.figure(); plt.imshow(np.abs(Eyxkn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
+plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{yx}}[:,976]|$'); #raw f-string
+plt.figure(); plt.imshow(np.abs(Eyykn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
+plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{yy}}[:,976]|$'); #raw f-string
+
+
 
 #%%  SVD cross spectrum figures
 ADr = A.SysD[DHinfo['pl45'],:]
