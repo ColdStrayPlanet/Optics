@@ -60,15 +60,26 @@ ACr = A.SysC[DHinfo['pl45'],:]
 Ud, sd, Vd = np.linalg.svd(ADr, full_matrices=True); Vd = np.conj(Vd.T);
 Uc, sc, Vc = np.linalg.svd(ACr, full_matrices=True); Vc = np.conj(Vc.T);
 
-sdmax = np.max(sd)
-scc = []
+sdmax = np.max(sd); scmax = np.max(sc)
+sdc = []; scd = [];
 for k in range(len(sd)):
-   scc.append(np.linalg.norm(ADr@Vc[:,k]))
-scc = np.array(scc)
+   sdc.append(np.linalg.norm(ADr@Vc[:,k]))
+   scd.append(np.linalg.norm(ACr@Vd[:,k]))
+sdc = np.array(sdc); scd = np.array(scd);
 
 plt.figure(figsize=(6,4))
 plt.plot(sd[:200] / sdmax, 'ko-', linewidth=2, label='Primary Spectrum')
-plt.plot(scc[:200] / sdmax, 'rx-', linewidth=1.5, label='Cross spectrum')
+plt.plot(sdc[:200] / sdmax, 'rx-', linewidth=1.5, label='1-2 Cross Spectrum')
+plt.xlabel('Mode index k')
+plt.ylabel('Normalized magnitude')
+#plt.title('')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+plt.figure(figsize=(6,4))
+plt.plot(sc[:200] / scmax, 'ko-', linewidth=2, label='Secondary Spectrum')
+plt.plot(scd[:200] / scmax, 'rx-', linewidth=1.5, label='2-1 Cross Spectrum')
 plt.xlabel('Mode index k')
 plt.ylabel('Normalized magnitude')
 #plt.title('')
@@ -76,6 +87,10 @@ plt.legend()
 plt.grid(True)
 plt.tight_layout()
 plt.show()
+
+
+
+
 
 #%% images of the polarized field on the entrance pupil
 dir1 = "../../EFCSimData"
