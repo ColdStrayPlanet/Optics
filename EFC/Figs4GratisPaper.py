@@ -214,15 +214,63 @@ plt.xlabel('modulation trial');plt.ylabel('Intensity (contrast)');
 
 
 #%%
-#plt.figure(); plt.imshow(np.log10(I0[100:180,100:180] + 1.e-6) ,origin='lower',cmap='coolwarm');plt.colorbar();
-plt.figure(); plt.imshow(np.log10(IdhXax[100:180,100:180] + 1.e-10) ,origin='lower',cmap='coolwarm');plt.colorbar();
-plt.figure(); plt.imshow(np.log10(Idh45[100:180,100:180] + 1.e-10) ,origin='lower',cmap='coolwarm');plt.colorbar();
-
-#plt.figure(); plt.imshow(np.log10(I0c[100:180,100:180] + 1.e-12) ,origin='lower',cmap='coolwarm');plt.colorbar();
-plt.figure(); plt.imshow(np.log10(IdhXaxc[100:180,100:180] + 1.e-14) ,origin='lower',cmap='coolwarm');plt.colorbar();
-#plt.figure(); plt.imshow(np.log10(Idh45c[100:180,100:180] + 1.e-14) ,origin='lower',cmap='coolwarm');plt.colorbar();
-
 plt.figure(); plt.imshow(np.log10(Ioa45dh[100:180,100:180] + 1.e-4),origin='lower',cmap='coolwarm'); plt.colorbar();
 plt.title('off-axis source, dark hole DM command')
-plt.figure(); plt.imshow(np.log10(IoaXaxdh[100:180,100:180] + 1.e-4),origin='lower',cmap='coolwarm'); plt.colorbar();
-plt.title('off-axis source, dark hole DM command')
+
+fig, axs = plt.subplots(
+    3, 2,
+    figsize=(6, 7.5),     # Plus compact verticalement
+    sharex='col',
+    sharey='row'
+)
+# Réduire les marges entre subplots
+plt.subplots_adjust(wspace=0.05, hspace=0.02)
+images = [
+    np.log10(I0[100:180, 100:180] + 1e-7),
+    np.log10(I0c[100:180, 100:180] + 1e-10),
+    np.log10(Idh45[100:180, 100:180] + 1e-10),
+    np.log10(Idh45c[100:180, 100:180] + 1e-12),
+    np.log10(IdhXax[100:180, 100:180] + 1e-9),
+    np.log10(IdhXaxc[100:180, 100:180] + 1e-10),
+]
+titles = [
+    "Nominal Primary", "Nominal Secondary",
+    "Primary Hole #1", "Secondary Hole #1",
+    "Primary Hole #2", "Secondary Hole #2"
+]
+for idx, ax in enumerate(axs.flat):
+    im = ax.imshow(images[idx], origin='lower', cmap='coolwarm')
+    ax.set_title(titles[idx], fontsize=9)
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
+# Optimisation finale de l'agencement
+plt.tight_layout(pad=0.5)  # Réduit encore l’espace autour
+plt.show()
+
+
+
+
+
+
+
+#%%
+if True:
+   cutpix = 30; isz = (128 - cutpix)/128; ext = [-isz,isz,-isz,isz];ii1=cutpix;ii2=256-cutpix;
+   plt.figure();plt.imshow(np.log10(I0[ii1:ii2,ii1:ii2]+1.e-9) ,extent=ext,origin='lower',cmap='coolwarm'),plt.colorbar();
+   plt.title("Primary PSF",fontsize=10);plt.xlabel("mm",fontsize=10);plt.ylabel("mm",fontsize=10);
+   plt.figure();plt.imshow(np.log10(I0c[ii1:ii2,ii1:ii2]+1.e-12) ,extent=ext,origin='lower',cmap='coolwarm'),plt.colorbar();
+   plt.title("Secondary PSF",fontsize=10);plt.xlabel("mm",fontsize=10);plt.ylabel("mm",fontsize=10);
+
+
+if False:
+   #plt.figure(); plt.imshow(np.log10(I0[100:180,100:180] + 1.e-6) ,origin='lower',cmap='coolwarm');plt.colorbar();
+   plt.figure(); plt.imshow(np.log10(IdhXax[100:180,100:180] + 1.e-10),origin='lower',cmap='coolwarm');plt.colorbar();
+   plt.figure(); plt.imshow(np.log10(Idh45[ 100:180,100:180] + 1.e-10),origin='lower',cmap='coolwarm');plt.colorbar();
+
+   #plt.figure(); plt.imshow(np.log10(I0c[100:180,100:180] + 1.e-12) ,origin='lower',cmap='coolwarm');plt.colorbar();
+   plt.figure(); plt.imshow(np.log10(IdhXaxc[100:180,100:180] + 1.e-14) ,origin='lower',cmap='coolwarm');plt.colorbar();
+   #plt.figure(); plt.imshow(np.log10(Idh45c[100:180,100:180] + 1.e-14) ,origin='lower',cmap='coolwarm');plt.colorbar();
+
+   plt.figure(); plt.imshow(np.log10(Ioa45dh[100:180,100:180] + 1.e-4),origin='lower',cmap='coolwarm'); plt.colorbar();
+   plt.title('off-axis source, dark hole DM command')
+   plt.figure(); plt.imshow(np.log10(IoaXaxdh[100:180,100:180] + 1.e-4),origin='lower',cmap='coolwarm'); plt.colorbar();
+   plt.title('off-axis source, dark hole DM command')
