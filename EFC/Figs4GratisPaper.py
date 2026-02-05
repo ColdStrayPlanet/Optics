@@ -10,26 +10,51 @@ import matplotlib.pyplot as plt
 from os.path import join
 import pickle
 import EFC as EFCm
+trunc = lambda x: float(np.format_float_scientific(x, precision=5))
 
 #%% load or calculate the dark hole solutions
 lamD = 5.89 # "lambda/D" in pixel units
-A = EFCm.EFC(EFCm.B21, EFCm.B33, EFCm.DomMat, EFCm.CroMat)
+UseOldMatrices = False
+if UseOldMatrices:
+   PropMatLoc = "/home/rfrazin/Py/EFCSimData/"
+   Sxfn = 'SysMatNorm_Xx_ColBeamCg256x256_kn33x33.npy'  #these simulations have an unpolarized beam at the Cg entrance
+   Syfn = 'SysMatNorm_Xy_ColBeamCg256x256_kn33x33.npy'
+   DomMat = np.load(join(PropMatLoc,Sxfn));
+   CroMat = np.load(join(PropMatLoc,Syfn));
+else:
+   DomMat = EFCm.DomMat; CroMat = EFCm.CroMat  #these simulations have the large primary and beam reduction
+
+A = EFCm.EFC(EFCm.B21, EFCm.B33, DomMat, CroMat)
+
 loadDHinfo = True
 if loadDHinfo:
-   with open("DHinfo12172025.pickle","rb") as fp: DHinfo = pickle.load(fp)
-else:  # do the optimizations
+   if UseOldMatrices:
+      with open("DHinfoOldMats02042026.pickle", "rb") as fp: DHinfo = pickle.load(fp)
+   else:
+      with open("DHinfo12172025.pickle","rb")         as fp: DHinfo = pickle.load(fp)
+else:  # dont load DHinfo -- do the optimizations
    pl45 = A.MakePixList( np.round(128 + lamD*np.array([3,7,3,7]) ).astype('int') ) #pixel lists for dark holes
    plxa = A.MakePixList( np.round(128 + lamD*np.array([3,7,-2,2])).astype('int') )
    print(f"The dark holes have {len(pl45)} and {len(plxa)} pixels.")
    (out45, sols45, cost45) = A.DigDominantHole(np.zeros(441,), pl45, DMconstr=np.pi/2)
    (outxa, solsxa, costxa) = A.DigDominantHole(np.zeros(441,), plxa, DMconstr=np.pi/2)
-   cost45 = np.array(DHinfo['cost45'])/len(DHinfo['pl45']) # mean intensity in DH
-   costxa = np.array(DHinfo['costxa'])/len(DHinfo['plxa'])
+   if UseOldMatrices:
+     cost45 = np.array(cost45)/len(pl45) # mean intensity in DH
+     costxa = np.array(costxa)/len(plxa)
+   else:
+     cost45 = np.array(DHinfo['cost45'])/len(DHinfo['pl45']) # mean intensity in DH
+     costxa = np.array(DHinfo['costxa'])/len(DHinfo['plxa'])
    ccro45 = []; ccroxa = [] # secondary mean intensities
-   for sol in DHinfo['sols45']:
-      ccro45.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['pl45'])))
-   for sol in DHinfo['solsxa']:
-      ccroxa.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['plxa'])))
+   if UseOldMatrices:
+      for sol in sols45:
+        ccro45.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=pl45)))
+      for sol in solsxa:
+        ccroxa.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=plxa)))
+   else:
+      for sol in DHinfo['sols45']:
+        ccro45.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['pl45'])))
+      for sol in DHinfo['solsxa']:
+        ccroxa.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['plxa'])))
 #%% show spline columumn 976 ~ (29,19) of the matrices.  Filenames such as Kn29dand19d_Exx.jpg
 kn = 976
 fnyx = join("../..", "EFCSimData/SysMatNorm_Yx_BigBeam2Cg256x256_Lam0.9_33x33.npy")
@@ -135,43 +160,22 @@ Phasorax = A.LinearPhaseForOffAxisSource(6.1, 0. , output='Phasor')
 Phasor45  = A.LinearPhaseForOffAxisSource(7.2, 45., output='Phasor')
 Cd45 = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['sols45'][soldex] + cmd, 'dom', pixlist=DHinfo['pl45'] ))
 Cc45 = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['sols45'][soldex] + cmd, 'cross', pixlist=DHinfo['pl45'] ))
-Cdax = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, 'dom', pixlist=DHinfo['plax'] ))
-Ccax = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, 'cross', pixlist=DHinfo['plax'] ))
+Cdax = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, 'dom', pixlist=DHinfo['plxa'] ))
+Ccax = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, 'cross', pixlist=DHinfo['plxa'] ))
 Ioa45  = lambda soldex, cmd: np.max(A.DMcmd2Intensity(DHinfo['sols45' ][soldex] + cmd, pmat='dom' ,pixlist=DHinfo['pl45'], OffAxPhasor=Phasor45))
-Ioaax = lambda soldex, cmd : np.max(A.DMcmd2Intensity(DHinfo['solsxa' ][soldex] + cmd ,pmat='dom',pixlist=DHinfo['plax'], OffAxPhasor=Phasorax))
+Ioaax = lambda soldex, cmd : np.max(A.DMcmd2Intensity(DHinfo['solsxa' ][soldex] + cmd ,pmat='dom',pixlist=DHinfo['plxz'], OffAxPhasor=Phasorax))
 
-load_iteration_intensities = True
-if load_iteration_intensities:
-   with open("IterationIntensities_01082026.pickle","rb") as fp: ItInt = pickle.load(fp)
-   Cdom45 = ItInt['Cdom45']; Ccro45 = ItInt['Ccro45'];
-   Cdomxa = ItInt['Cdomxa']; Ccroxa = ItInt['Ccroxa']
-else: #calculate intensity as a function of iteration.  This takes about 10 min
-   trunc = lambda x: float(np.format_float_scientific(x, precision=5))
-   Ccro45  = []
-   Cdom45  = []
-   Ccroxa = []
-   Cdomxa = []
-   for k in range(len(DHinfo['sols45'])):
-       Ccro45.append(trunc(Cc45(k, np.zeros(len(DHinfo['sols45'][0]),))))
-       Cdom45.append(trunc(Cd45(k, np.zeros(len(DHinfo['sols45'][0]),))))
-   if False:  #remove identical costs. Problem: the two arrays have different lengths due to less sensitivity of the secondary field.
-      Ccro45 = np.array(list(dict.fromkeys(Ccro45)))  #not every iteration makes progress.  This  removes identical costs (intensities) while preserving the order.
-      Cdom45 = np.array(list(dict.fromkeys(Cdom45)))
-   else:  Ccro45 = np.array(Ccro45);  Cdom45 = np.array(Cdom45)
-   for k in range(len(DHinfo['solsxa'])):
-       Ccroxa.append(trunc(Ccax(k, np.zeros(len(DHinfo['sols45'][0]),))))
-       Cdomxa.append(trunc(Cdax(k, np.zeros(len(DHinfo['sols45'][0]),))))
-   Ccroxa = np.array(Ccroxa); Cdomxa = np.array(Cdomxa)
+#%%
 
 #make iteration figures
-save_it_figs=False
+Cdom45 = DHinfo['cost45']; Ccro45 = DHinfo['ccro45']
+Cdomxa = DHinfo['costxa']; Ccroxa = DHinfo['ccroxa']
 plt.figure(); plt.title("Dark Hole Intensity Vs. Iteration");
 plt.plot(np.log10(Cdom45),'ko-',linewidth=3, label="Primary");
 plt.plot(np.log10(Ccro45),'gx:',linewidth=2, label="Secondary");
 plt.plot(np.log10(Cdom45+Ccro45),'r-', linewidth=1, label="Total");
 plt.legend(loc='upper right');
 plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
-if save_it_figs: pass
 plt.figure()
 plt.plot(np.log10(Cdomxa),'ko-',linewidth=3,label="Primary");
 plt.plot(np.log10(Ccroxa),'gx:',linewidth=2,label="Secondary");
