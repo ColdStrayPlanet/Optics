@@ -14,47 +14,48 @@ trunc = lambda x: float(np.format_float_scientific(x, precision=5))
 
 #%% load or calculate the dark hole solutions
 lamD = 5.89 # "lambda/D" in pixel units
-UseOldMatrices = False
-if UseOldMatrices:
-   PropMatLoc = "/home/rfrazin/Py/EFCSimData/"
-   Sxfn = 'SysMatNorm_Xx_ColBeamCg256x256_kn33x33.npy'  #these simulations have an unpolarized beam at the Cg entrance
-   Syfn = 'SysMatNorm_Xy_ColBeamCg256x256_kn33x33.npy'
-   DomMat = np.load(join(PropMatLoc,Sxfn));
-   CroMat = np.load(join(PropMatLoc,Syfn));
-else:
-   DomMat = EFCm.DomMat; CroMat = EFCm.CroMat  #these simulations have the large primary and beam reduction
+PropMatLoc = "/home/rfrazin/Py/EFCSimData/"
+Domfn =  'SysMatNorm_Xx_BigBeam2Cg256x256_Lam0.9_33x33.npy'
+Crofn =  'SysMatNorm_Xx_BigBeam2Cg256x256_Lam0.9_33x33.npy'
+Dom2fn = 'SysMatNormPiShift_Yy_BigBeam2Cg256x256_Lam0.9_33x33.npy'
+Cro2fn = 'SysMatNormPiShift_Yx_BigBeam2Cg256x256_Lam0.9_33x33.npy'
+DomMat = np.load(join(PropMatLoc,Domfn));
+CroMat = np.load(join(PropMatLoc,Crofn));
+DomMat2 = np.load(join(PropMatLoc,Dom2fn));
+CroMat2 = np.load(join(PropMatLoc,Cro2fn));
 
-A = EFCm.EFC(EFCm.B21, EFCm.B33, DomMat, CroMat)
-
-loadDHinfo = True
+A = EFCm.EFC(EFCm.B21, EFCm.B33, DomMat, CroMat, Dom2PropMat=DomMat2, Cross2PropMat=CroMat2)
+#%%
+loadDHinfo = False
 if loadDHinfo:
-   if UseOldMatrices:
-      with open("DHinfoOldMats02042026.pickle", "rb") as fp: DHinfo = pickle.load(fp)
-   else:
-      with open("DHinfo12172025.pickle","rb")         as fp: DHinfo = pickle.load(fp)
+   DHinfofilename = "DHinfo02062026.pickle"
+   with open(DHinfofilename, "rb") as fp: DHinfo = pickle.load(fp)
 else:  # dont load DHinfo -- do the optimizations
-   pl45 = A.MakePixList( np.round(128 + lamD*np.array([3,7,3,7]) ).astype('int') ) #pixel lists for dark holes
-   plxa = A.MakePixList( np.round(128 + lamD*np.array([3,7,-2,2])).astype('int') )
+   pl45 = A.MakePixList( np.round(128 + lamD*np.array([4,7,4,7]) ).astype('int') ) #pixel lists for dark holes
+   plxa = A.MakePixList( np.round(128 + lamD*np.array([4,7,-1.5,1.5])).astype('int') )
    print(f"The dark holes have {len(pl45)} and {len(plxa)} pixels.")
-   (out45, sols45, cost45) = A.DigDominantHole(np.zeros(441,), pl45, DMconstr=np.pi/2)
-   (outxa, solsxa, costxa) = A.DigDominantHole(np.zeros(441,), plxa, DMconstr=np.pi/2)
-   if UseOldMatrices:
-     cost45 = np.array(cost45)/len(pl45) # mean intensity in DH
-     costxa = np.array(costxa)/len(plxa)
-   else:
-     cost45 = np.array(DHinfo['cost45'])/len(DHinfo['pl45']) # mean intensity in DH
-     costxa = np.array(DHinfo['costxa'])/len(DHinfo['plxa'])
-   ccro45 = []; ccroxa = [] # secondary mean intensities
-   if UseOldMatrices:
-      for sol in sols45:
-        ccro45.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=pl45)))
-      for sol in solsxa:
-        ccroxa.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=plxa)))
-   else:
-      for sol in DHinfo['sols45']:
-        ccro45.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['pl45'])))
-      for sol in DHinfo['solsxa']:
-        ccroxa.append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['plxa'])))
+   (out45, sols45, cost45) = A.DigDominantHole(np.zeros(441,), pl45, TwoDoms=True, DMconstr=np.pi/2)
+   (outxa, solsxa, costxa) = A.DigDominantHole(np.zeros(441,), plxa, TwoDoms=True, DMconstr=np.pi/2)
+
+#%%  evaluate all of the mean intensities in the dark holes
+   DHinfo['cdom45']  = []; DHinfo['cdomxa']  = [] # primary mean intensities  XX
+   DHinfo['ccro45']  = []; DHinfo['ccroxa']  = [] # secondary mean intensities XY
+   DHinfo['cdom452'] = []; DHinfo['cdomxa2'] = [] # primary mean intensities YY
+   DHinfo['ccro452'] = []; DHinfo['ccroxa2'] = [] # secondary mean intensities YX
+
+
+   for sol in DHinfo['sols45']:
+     DHinfo['ccro45'].append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['pl45'])))
+     DHinfo['cdom45'].append(np.mean(A.DMcmd2Intensity(sol,'dom',pixlist=DHinfo['pl45'])))
+     DHinfo['ccro452'].append(np.mean(A.DMcmd2Intensity(sol,'cross2',pixlist=DHinfo['pl45'])))
+     DHinfo['cdom452'].append(np.mean(A.DMcmd2Intensity(sol,'dom2',pixlist=DHinfo['pl45'])))
+   for sol in DHinfo['solsxa']:
+     DHinfo['cdomxa'].append(np.mean(A.DMcmd2Intensity(sol,'dom',pixlist=DHinfo['plxa'])))
+     DHinfo['ccroxa'].append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['plxa'])))
+     DHinfo['cdomxa2'].append(np.mean(A.DMcmd2Intensity(sol,'dom2',pixlist=DHinfo['plxa'])))
+     DHinfo['ccroxa2'].append(np.mean(A.DMcmd2Intensity(sol,'cross2',pixlist=DHinfo['plxa'])))
+
+
 #%% show spline columumn 976 ~ (29,19) of the matrices.  Filenames such as Kn29dand19d_Exx.jpg
 kn = 976
 fnyx = join("../..", "EFCSimData/SysMatNorm_Yx_BigBeam2Cg256x256_Lam0.9_33x33.npy")
@@ -168,14 +169,21 @@ Ioaax = lambda soldex, cmd : np.max(A.DMcmd2Intensity(DHinfo['solsxa' ][soldex] 
 #%%
 
 #make iteration figures
-Cdom45 = DHinfo['cost45']; Ccro45 = DHinfo['ccro45']
-Cdomxa = DHinfo['costxa']; Ccroxa = DHinfo['ccroxa']
+lpl45 = len(DHinfo['pl45']);   lplxa = len(DHinfo['plxa'])
+Cdom45  = DHinfo['cdom45'] ; Ccro45  = DHinfo['ccro45']
+Cdom45b = DHinfo['cdom452'] ; Ccro45b  = DHinfo['ccro452']
+Cdomxa  = DHinfo['cdomxa'] ; Ccroxa   = DHinfo['ccroxa']
+Cdomxab = DHinfo['cdomxa2'] ; Ccroxab  = DHinfo['ccroxa2']
+
 plt.figure(); plt.title("Dark Hole Intensity Vs. Iteration");
-plt.plot(np.log10(Cdom45),'ko-',linewidth=3, label="Primary");
-plt.plot(np.log10(Ccro45),'gx:',linewidth=2, label="Secondary");
-plt.plot(np.log10(Cdom45+Ccro45),'r-', linewidth=1, label="Total");
+plt.plot(np.log10(Cdom45),'k-',linewidth=3, label="Primary (XX)");
+plt.plot(np.log10(Cdom45b),'ko',linewidth=3, label="Primary (YY)");
+plt.plot(np.log10(Ccro45),'g-',linewidth=2, label="Secondary (XY)");
+plt.plot(np.log10(Ccro45b),'g^',linewidth=2, label="Secondary (YX)");
+#plt.plot(np.log10(Cdom45+Ccro45),'r-', linewidth=1, label="Total");
 plt.legend(loc='upper right');
 plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
+
 plt.figure()
 plt.plot(np.log10(Cdomxa),'ko-',linewidth=3,label="Primary");
 plt.plot(np.log10(Ccroxa),'gx:',linewidth=2,label="Secondary");

@@ -30,10 +30,10 @@ Reduced = True
 if not Reduced: assert False  # the fplength is problematic
 if Reduced:  #stuff averaged over 2x2 pixels in the image plane
     fpsize //= 2
-    Sxfn = 'SysMatNorm_Xx_BigBeam2Cg256x256_Lam0.9_33x33.npy'
-    Syfn = 'SysMatNorm_Xy_BigBeam2Cg256x256_Lam0.9_33x33.npy'
-DomMat = np.load(ospath.join(PropMatLoc,Sxfn));
-CroMat = np.load(ospath.join(PropMatLoc,Syfn));
+#    Sxfn = 'SysMatNorm_Xx_BigBeam2Cg256x256_Lam0.9_33x33.npy'
+#    Syfn = 'SysMatNorm_Xy_BigBeam2Cg256x256_Lam0.9_33x33.npy'
+#DomMat = np.load(ospath.join(PropMatLoc,Sxfn));
+#CroMat = np.load(ospath.join(PropMatLoc,Syfn));
 
 #set things up for a 21x21 DM with its phasor represented by a 33x33 B-spline
 s = np.linspace(-0.5, 0.5, 165); xx, yy = np.meshgrid(s,s);
@@ -47,10 +47,11 @@ B33 = BS.BivariateCubicSpline(xx.flatten(),yy.flatten(),33,Xmin=-0.5-Delta33,Del
 #%%
 
 class EFC():
-   def __init__(self, SpLo, SpHi, DomPropMat, CrossPropMat, Cross2PropMat=None):
+   def __init__(self, SpLo, SpHi, DomPropMat, CrossPropMat, Dom2PropMat=None, Cross2PropMat=None):
       self.SpLo = SpLo
       self.SpHi = SpHi
       self.SysD = DomPropMat
+      self.SysD2 = Dom2PropMat
       self.SysC = CrossPropMat
       self.SysC2 = Cross2PropMat
       self.detshape = (int(np.sqrt(DomPropMat.shape[0])), int(np.sqrt(DomPropMat.shape[0])))   # shape of detector
@@ -88,10 +89,12 @@ class EFC():
 
    def DMcmd2Field(self, dmc, pmat='dom', pixlist=None, return_grad=False,  OffAxPhasor=None):
       if return_grad and (OffAxPhasor is not None): raise ValueError("return_grad = True and a value for OffAxPhasor are not compatible.")
-      if pmat not in ['dom','cross','cross2']:
-         raise ValueError("the string pmat must be one of the allowable choices.")
-      if pmat == 'cross2' and self.C2 is None: raise Exception("Cross2PropMat not initialized.")
+      if pmat not in ['dom','dom2','cross','cross2']:
+         raise ValueError("DMcmd2Field: The string pmat must be one of the allowable choices.")
+      if pmat == 'cross2' and self.SysC2 is None: raise Exception("Cross2PropMat not initialized.")
+      if pmat == 'dom2'   and self.SysD2 is None: raise Exception("Dom2PropMat not initialized.")
       if pmat == 'dom': Sys = self.SysD
+      if pmat == 'dom2': Sys = self.SysD2
       if pmat == 'cross': Sys = self.SysC
       if pmat == 'cross2': Sys = self.SysC2
       if pixlist is not None:
@@ -106,6 +109,7 @@ class EFC():
          jac = Sys@dco
          return ( (field, jac) )
 
+   #See self.DMcmd2Field for arguments
    def DMcmd2Intensity(self, dmc, pmat='dom', pixlist=None, return_grad=False, OffAxPhasor=None):
       if return_grad and (OffAxPhasor is not None): raise ValueError("return_grad = True and a value for OffAxPhasor are not compatible.")
       if not return_grad:
@@ -137,12 +141,16 @@ class EFC():
                pixlist.append(ff(r,c))
        return pixlist
 
-   def DigDominantHole(self, dmc, pixlist, DMconstr=np.pi/3):
+   def DigDominantHole(self, dmc, pixlist, TwoDoms=False, DMconstr=np.pi/3):
       N = int(np.sqrt(self.SpLo.Nsp))
-      def Cost(dmc, pmat='dom'):
-         I, gI = self.DMcmd2Intensity(dmc, pmat=pmat, pixlist=pixlist, return_grad=True)
+      def Cost(dmc):
+         I, gI = self.DMcmd2Intensity(dmc, pmat='dom', pixlist=pixlist, return_grad=True)
          cost = np.sum(I)
          gcost = np.sum(gI,axis=0)
+         if TwoDoms:
+            I, gI = self.DMcmd2Intensity(dmc, pmat='dom2', pixlist=pixlist, return_grad=True)
+            cost = cost/2 + np.sum(I)/2
+            gcost = gcost/2 + np.sum(gI,axis=0)/2
          return((cost, gcost))
       def make_gradient_matrix(N):  # this for the inequality constraints on DM command
           rows = []
@@ -177,7 +185,7 @@ class EFC():
          return(None)
 
 
-      ops = {'maxiter':2000, 'xtol':1.e-9, 'gtol':1.e-9, 'verbose':2}
+      ops = {'maxiter':3000, 'xtol':1.e-9, 'gtol':1.e-10, 'verbose':2}
       out = minimize(Cost, dmc, jac=True, method='trust-constr',constraints=[constraint],
                      callback=mycallback, options=ops)
 
