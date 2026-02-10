@@ -185,7 +185,7 @@ class EFC():
          return(None)
 
 
-      ops = {'maxiter':3000, 'xtol':1.e-9, 'gtol':1.e-10, 'verbose':2}
+      ops = {'maxiter':2000, 'xtol':1.e-9, 'gtol':1.e-10, 'verbose':2}
       out = minimize(Cost, dmc, jac=True, method='trust-constr',constraints=[constraint],
                      callback=mycallback, options=ops)
 

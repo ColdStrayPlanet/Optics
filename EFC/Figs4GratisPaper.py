@@ -12,32 +12,37 @@ import pickle
 import EFC as EFCm
 trunc = lambda x: float(np.format_float_scientific(x, precision=5))
 
-#%% load or calculate the dark hole solutions
+#%%
 lamD = 5.89 # "lambda/D" in pixel units
 PropMatLoc = "/home/rfrazin/Py/EFCSimData/"
 Domfn =  'SysMatNorm_Xx_BigBeam2Cg256x256_Lam0.9_33x33.npy'
-Crofn =  'SysMatNorm_Xx_BigBeam2Cg256x256_Lam0.9_33x33.npy'
+Crofn =  'SysMatNorm_Xy_BigBeam2Cg256x256_Lam0.9_33x33.npy'
 Dom2fn = 'SysMatNormPiShift_Yy_BigBeam2Cg256x256_Lam0.9_33x33.npy'
 Cro2fn = 'SysMatNormPiShift_Yx_BigBeam2Cg256x256_Lam0.9_33x33.npy'
 DomMat = np.load(join(PropMatLoc,Domfn));
 CroMat = np.load(join(PropMatLoc,Crofn));
 DomMat2 = np.load(join(PropMatLoc,Dom2fn));
 CroMat2 = np.load(join(PropMatLoc,Cro2fn));
+DHinfo = None
 
 A = EFCm.EFC(EFCm.B21, EFCm.B33, DomMat, CroMat, Dom2PropMat=DomMat2, Cross2PropMat=CroMat2)
 #%%
 loadDHinfo = False
 if loadDHinfo:
-   DHinfofilename = "DHinfo02062026.pickle"
+   DHinfofilename = "DHinfo02092026_XXopt.pickle"
    with open(DHinfofilename, "rb") as fp: DHinfo = pickle.load(fp)
 else:  # dont load DHinfo -- do the optimizations
-   pl45 = A.MakePixList( np.round(128 + lamD*np.array([4,7,4,7]) ).astype('int') ) #pixel lists for dark holes
-   plxa = A.MakePixList( np.round(128 + lamD*np.array([4,7,-1.5,1.5])).astype('int') )
+   pl45 = A.MakePixList( np.round(128 + lamD*np.array([2,5,2,5]) ).astype('int') ) #pixel lists for dark holes
+   plxa = A.MakePixList( np.round(128 + lamD*np.array([2,5,-1.5,1.5])).astype('int') )
    print(f"The dark holes have {len(pl45)} and {len(plxa)} pixels.")
    (out45, sols45, cost45) = A.DigDominantHole(np.zeros(441,), pl45, TwoDoms=True, DMconstr=np.pi/2)
    (outxa, solsxa, costxa) = A.DigDominantHole(np.zeros(441,), plxa, TwoDoms=True, DMconstr=np.pi/2)
 
-#%%  evaluate all of the mean intensities in the dark holes
+# evaluate all of the mean intensities in the dark holes
+   if DHinfo is None:
+      DHinfo = dict()
+   DHinfo['sols45'] = sols45;  DHinfo['solsxa'] = solsxa;
+   DHinfo['plxa'] = plxa; DHinfo['pl45'] = pl45;
    DHinfo['cdom45']  = []; DHinfo['cdomxa']  = [] # primary mean intensities  XX
    DHinfo['ccro45']  = []; DHinfo['ccroxa']  = [] # secondary mean intensities XY
    DHinfo['cdom452'] = []; DHinfo['cdomxa2'] = [] # primary mean intensities YY
@@ -170,24 +175,24 @@ Ioaax = lambda soldex, cmd : np.max(A.DMcmd2Intensity(DHinfo['solsxa' ][soldex] 
 
 #make iteration figures
 lpl45 = len(DHinfo['pl45']);   lplxa = len(DHinfo['plxa'])
-Cdom45  = DHinfo['cdom45'] ; Ccro45  = DHinfo['ccro45']
-Cdom45b = DHinfo['cdom452'] ; Ccro45b  = DHinfo['ccro452']
-Cdomxa  = DHinfo['cdomxa'] ; Ccroxa   = DHinfo['ccroxa']
-Cdomxab = DHinfo['cdomxa2'] ; Ccroxab  = DHinfo['ccroxa2']
+Cdom45  = np.array(DHinfo['cdom45'])  ; Ccro45  = np.array(DHinfo['ccro45'])
+Cdom45b = np.array(DHinfo['cdom452']) ; Ccro45b = np.array(DHinfo['ccro452'])
+Cdomxa  = np.array(DHinfo['cdomxa'])  ; Ccroxa  = np.array(DHinfo['ccroxa'])
+Cdomxab = np.array(DHinfo['cdomxa2']) ; Ccroxab = np.array( DHinfo['ccroxa2'])
 
 plt.figure(); plt.title("Dark Hole Intensity Vs. Iteration");
-plt.plot(np.log10(Cdom45),'k-',linewidth=3, label="Primary (XX)");
-plt.plot(np.log10(Cdom45b),'ko',linewidth=3, label="Primary (YY)");
-plt.plot(np.log10(Ccro45),'g-',linewidth=2, label="Secondary (XY)");
-plt.plot(np.log10(Ccro45b),'g^',linewidth=2, label="Secondary (YX)");
-#plt.plot(np.log10(Cdom45+Ccro45),'r-', linewidth=1, label="Total");
+plt.plot(np.log10(Cdom45/2),'k',linewidth=6, label="Primary (XX)");
+plt.plot(np.log10(Cdom45b/2),'r',linewidth=2, label="Primary (YY)");
+plt.plot(np.log10(Ccro45/2),'purple',linewidth=6, label="Secondary (XY)");
+plt.plot(np.log10(Ccro45b/2),'cyan',linewidth=2, label="Secondary (YX)");
 plt.legend(loc='upper right');
 plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
 
-plt.figure()
-plt.plot(np.log10(Cdomxa),'ko-',linewidth=3,label="Primary");
-plt.plot(np.log10(Ccroxa),'gx:',linewidth=2,label="Secondary");
-plt.plot(np.log10(Cdomxa+Ccroxa),'r-',linewidth=1, label="Total");
+plt.figure(); plt.title("Dark Hole Intensity Vs. Iteration");
+plt.plot(np.log10(Cdomxa/2),'k',linewidth=6, label="Primary (XX)");
+plt.plot(np.log10(Cdomxab/2),'r',linewidth=2, label="Primary (YY)");
+plt.plot(np.log10(Ccroxa/2),'purple',linewidth=6, label="Secondary (XY)");
+plt.plot(np.log10(Ccroxab/2),'cyan',linewidth=2, label="Secondary (YX)");
 plt.legend(loc='upper right');
 plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
 
