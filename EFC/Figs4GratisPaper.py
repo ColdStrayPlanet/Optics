@@ -330,7 +330,7 @@ def make_6x2_figure(images, page_size=(8.5, 11),
 
     return(None)
 #%%  This is for the full page figures with 24 images
-def make_6x2_figure(images, page_size=(8.5, 11),
+def make_6x4_figure(images, page_size=(8.5, 11),
                 left_margin=1, right_margin=1,
                 top_margin=1, bottom_margin=1,
                 caption_space=1.5):
@@ -352,7 +352,7 @@ def make_6x2_figure(images, page_size=(8.5, 11),
     bottom = (bottom_margin + caption_space) / fig_height
     top = 1 - top_margin / fig_height
     gs = fig.add_gridspec(
-        6, 2, # grille 6x2
+        6, 4, # grille 6x4
         left=left,
         right=right,
         bottom=bottom,
@@ -365,7 +365,9 @@ def make_6x2_figure(images, page_size=(8.5, 11),
        ax.axis('off')
        fig.colorbar(im, ax=ax, fraction=0.045, pad=0.02)
 
-    return(None)#%% Make the full page figures showing the nominal and dark hole results.
+    return(None)
+
+#%% Make the full page figures showing the nominal and dark hole results.
 DHinfofilename = "DHinfo02092026_XXYYopt.pickle"
 with open(DHinfofilename, "rb") as fp: dxy = pickle.load(fp)
 DHinfofilename = "DHinfo02092026_XXopt.pickle"
@@ -377,7 +379,6 @@ imagelist = [];
 sols45a = dx['sols45'][-1]; sols45b = dxy['sols45'][-1]
 solsxaa = dx['solsxa'][-1]; solsxab = dxy['solsxa'][-1]
 i1=100; i2=180
-
 #hole #1
 im0  = A.DMcmd2Intensity(cmd0,   pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
 im0 = np.log10(im0 + 1.e-8)
@@ -390,7 +391,7 @@ im12 = np.log10(im12 + 1.e-12)
 im16 = A.DMcmd2Intensity(sols45a,pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
 im16  = np.log10(im16 + 1.e-12)
 im20 = A.DMcmd2Intensity(sols45b,pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im20 = np.log10(im16 + 1.e-12)
+im20 = np.log10(im20 + 1.e-12)
 im1 = A.DMcmd2Intensity(cmd0,   pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
 im1 = np.log10(im1 + 1.e-8)
 im5 = A.DMcmd2Intensity(sols45a,pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
@@ -406,29 +407,29 @@ im21 = np.log10(im21 + 1.e-12)
 
 #hole #2   - ax solutions
 im2  = A.DMcmd2Intensity(cmd0,   pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im2 = np.log10(im0 + 1.e-8)
-im6 = A.DMcmd2Intensity(sols45a,pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im6 = np.log10(im4 + 1.e-11)
-im10  = A.DMcmd2Intensity(sols45b,pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im10  = np.log10(im8 + 1.e-9)
+im2 = np.log10(im2 + 1.e-8)
+im6 = A.DMcmd2Intensity(solsxaa,pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im6 = np.log10(im6 + 1.e-11)
+im10  = A.DMcmd2Intensity(solsxab,pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im10  = np.log10(im10 + 1.e-9)
 im14  = A.DMcmd2Intensity(cmd0,   pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im14 = np.log10(im12 + 1.e-12)
-im18 = A.DMcmd2Intensity(sols45a,pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im18  = np.log10(im16 + 1.e-12)
-im22 = A.DMcmd2Intensity(sols45b,pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im22 = np.log10(im16 + 1.e-12)
+im14 = np.log10(im14 + 1.e-12)
+im18 = A.DMcmd2Intensity(solsxaa,pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im18  = np.log10(im18 + 1.e-12)
+im22 = A.DMcmd2Intensity(solsxab,pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im22 = np.log10(im22 + 1.e-12)
 im3 = A.DMcmd2Intensity(cmd0,   pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im3 = np.log10(im1 + 1.e-8)
-im7 = A.DMcmd2Intensity(sols45a,pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im7 = np.log10(im5 + 1.e-9)
-im11  = A.DMcmd2Intensity(sols45b,pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im11 = np.log10(im9 + 1.e-10)
+im3 = np.log10(im3 + 1.e-8)
+im7 = A.DMcmd2Intensity(solsxaa,pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im7 = np.log10(im7 + 1.e-9)
+im11  = A.DMcmd2Intensity(solsxab,pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im11 = np.log10(im11 + 1.e-10)
 im15  = A.DMcmd2Intensity(cmd0,   pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im15 = np.log10(im13 + 1.e-12)
-im19  = A.DMcmd2Intensity(sols45a,pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im19 = np.log10(im17)
-im23 = A.DMcmd2Intensity(sols45b,pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im23 = np.log10(im21 + 1.e-12)
+im15 = np.log10(im15 + 1.e-12)
+im19  = A.DMcmd2Intensity(solsxaa,pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im19 = np.log10(im19)
+im23 = A.DMcmd2Intensity(solsxab,pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im23 = np.log10(im23 + 1.e-12)
 
 
 
