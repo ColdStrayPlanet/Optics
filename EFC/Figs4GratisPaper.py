@@ -27,9 +27,9 @@ DHinfo = None
 
 A = EFCm.EFC(EFCm.B21, EFCm.B33, DomMat, CroMat, Dom2PropMat=DomMat2, Cross2PropMat=CroMat2)
 #%%
-loadDHinfo = False
+loadDHinfo = True
 if loadDHinfo:
-   DHinfofilename = "DHinfo02092026_XXopt.pickle"
+   DHinfofilename = "DHinfo02092026_XXYYopt.pickle"
    with open(DHinfofilename, "rb") as fp: DHinfo = pickle.load(fp)
 else:  # dont load DHinfo -- do the optimizations
    pl45 = A.MakePixList( np.round(128 + lamD*np.array([2,5,2,5]) ).astype('int') ) #pixel lists for dark holes
@@ -291,3 +291,146 @@ if False:
    plt.title('off-axis source, dark hole DM command')
    plt.figure(); plt.imshow(np.log10(IoaXaxdh[100:180,100:180] + 1.e-4),origin='lower',cmap='coolwarm'); plt.colorbar();
    plt.title('off-axis source, dark hole DM command')
+
+#%%  This is for the full page figures with 12 images
+def make_6x2_figure(images, page_size=(8.5, 11),
+                left_margin=1, right_margin=1,
+                top_margin=1, bottom_margin=1,
+                caption_space=1.5):
+    """
+    Crée une figure Letter portrait avec grille 6x2 d´images et espace pour caption.
+    images : list d'images (length = 12)
+    axes[0,0] is images[0], axes[0, 1] is images[1], axes[1, 0] is images[2], etc.
+    axes[0,0] is the upper left.
+    page_size : (largeur, hauteur) en pouces
+    margins : marges en pouces
+    caption_space : hauteur de la zone pour caption en pouces
+    """
+    fig_width, fig_height = page_size
+    fig = plt.figure(figsize=page_size)
+
+    # coordonnées normalisées
+    left = left_margin / fig_width
+    right = 1 - right_margin / fig_width
+    bottom = (bottom_margin + caption_space) / fig_height
+    top = 1 - top_margin / fig_height
+    gs = fig.add_gridspec(
+        6, 2, # grille 6x2
+        left=left,
+        right=right,
+        bottom=bottom,
+        top=top,
+        wspace=0.05,
+        hspace=0.05)
+    axes = gs.subplots()
+    for ax, img in zip(axes.flat, images):
+       im = ax.imshow(img, aspect='equal', cmap='coolwarm',origin='lower')
+       ax.axis('off')
+       fig.colorbar(im, ax=ax, fraction=0.045, pad=0.02)
+
+    return(None)
+#%%  This is for the full page figures with 24 images
+def make_6x2_figure(images, page_size=(8.5, 11),
+                left_margin=1, right_margin=1,
+                top_margin=1, bottom_margin=1,
+                caption_space=1.5):
+    """
+    Crée une figure Letter portrait avec grille 6x4 d´images et espace pour caption.
+    images : list d'images (length = 24)
+    axes[0,0] is images[0], axes[0, 1] is images[1], axes[1, 0] is images[4], etc.
+    axes[0,0] is the upper left.
+    page_size : (largeur, hauteur) en pouces
+    margins : marges en pouces
+    caption_space : hauteur de la zone pour caption en pouces
+    """
+    fig_width, fig_height = page_size
+    fig = plt.figure(figsize=page_size)
+
+    # coordonnées normalisées
+    left = left_margin / fig_width
+    right = 1 - right_margin / fig_width
+    bottom = (bottom_margin + caption_space) / fig_height
+    top = 1 - top_margin / fig_height
+    gs = fig.add_gridspec(
+        6, 2, # grille 6x2
+        left=left,
+        right=right,
+        bottom=bottom,
+        top=top,
+        wspace=0.05,
+        hspace=0.05)
+    axes = gs.subplots()
+    for ax, img in zip(axes.flat, images):
+       im = ax.imshow(img, aspect='equal', cmap='coolwarm',origin='lower')
+       ax.axis('off')
+       fig.colorbar(im, ax=ax, fraction=0.045, pad=0.02)
+
+    return(None)#%% Make the full page figures showing the nominal and dark hole results.
+DHinfofilename = "DHinfo02092026_XXYYopt.pickle"
+with open(DHinfofilename, "rb") as fp: dxy = pickle.load(fp)
+DHinfofilename = "DHinfo02092026_XXopt.pickle"
+with open(DHinfofilename, "rb") as fp: dx = pickle.load(fp)
+cmd0 = np.zeros((441,))
+
+#the make list of images for 6x4 grid
+imagelist = [];
+sols45a = dx['sols45'][-1]; sols45b = dxy['sols45'][-1]
+solsxaa = dx['solsxa'][-1]; solsxab = dxy['solsxa'][-1]
+i1=100; i2=180
+
+#hole #1
+im0  = A.DMcmd2Intensity(cmd0,   pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im0 = np.log10(im0 + 1.e-8)
+im4 = A.DMcmd2Intensity(sols45a,pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im4 = np.log10(im4 + 1.e-11)
+im8  = A.DMcmd2Intensity(sols45b,pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im8  = np.log10(im8 + 1.e-9)
+im12  = A.DMcmd2Intensity(cmd0,   pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im12 = np.log10(im12 + 1.e-12)
+im16 = A.DMcmd2Intensity(sols45a,pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im16  = np.log10(im16 + 1.e-12)
+im20 = A.DMcmd2Intensity(sols45b,pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im20 = np.log10(im16 + 1.e-12)
+im1 = A.DMcmd2Intensity(cmd0,   pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im1 = np.log10(im1 + 1.e-8)
+im5 = A.DMcmd2Intensity(sols45a,pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im5 = np.log10(im5 + 1.e-9)
+im9  = A.DMcmd2Intensity(sols45b,pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im9 = np.log10(im9 + 1.e-10)
+im13  = A.DMcmd2Intensity(cmd0,   pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im13 = np.log10(im13 + 1.e-12)
+im17  = A.DMcmd2Intensity(sols45a,pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im17 = np.log10(im17)
+im21 = A.DMcmd2Intensity(sols45b,pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im21 = np.log10(im21 + 1.e-12)
+
+#hole #2   - ax solutions
+im2  = A.DMcmd2Intensity(cmd0,   pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im2 = np.log10(im0 + 1.e-8)
+im6 = A.DMcmd2Intensity(sols45a,pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im6 = np.log10(im4 + 1.e-11)
+im10  = A.DMcmd2Intensity(sols45b,pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im10  = np.log10(im8 + 1.e-9)
+im14  = A.DMcmd2Intensity(cmd0,   pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im14 = np.log10(im12 + 1.e-12)
+im18 = A.DMcmd2Intensity(sols45a,pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im18  = np.log10(im16 + 1.e-12)
+im22 = A.DMcmd2Intensity(sols45b,pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im22 = np.log10(im16 + 1.e-12)
+im3 = A.DMcmd2Intensity(cmd0,   pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im3 = np.log10(im1 + 1.e-8)
+im7 = A.DMcmd2Intensity(sols45a,pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im7 = np.log10(im5 + 1.e-9)
+im11  = A.DMcmd2Intensity(sols45b,pmat='dom2'  ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im11 = np.log10(im9 + 1.e-10)
+im15  = A.DMcmd2Intensity(cmd0,   pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im15 = np.log10(im13 + 1.e-12)
+im19  = A.DMcmd2Intensity(sols45a,pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im19 = np.log10(im17)
+im23 = A.DMcmd2Intensity(sols45b,pmat='cross2',return_grad=False).reshape((256,256))[i1:i2,i1:i2]
+im23 = np.log10(im21 + 1.e-12)
+
+
+
+imagelist =[im0, im1, im2, im3, im4, im5, im6, im7, im8, im9, im10, im11,
+            im12,im13,im14,im15,im16,im17,im18,im19,im20,im21,im22,im23]
