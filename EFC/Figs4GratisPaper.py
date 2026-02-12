@@ -120,7 +120,38 @@ plt.tight_layout()
 plt.show()
 
 
+#%%  SVD cross spectrum figures
+AD1 = A.SysD[DHinfo['pl45'],:]
+AD2 = A.SysD2[DHinfo['pl45'],:]
+AC1 = A.SysC[DHinfo['pl45'],:]
+Ud1, sd1, Vd1 = np.linalg.svd(AD1, full_matrices=True); Vd1 = np.conj(Vd1.T);
+Ud2, sd2, Vd2 = np.linalg.svd(AD2, full_matrices=True); Vd2 = np.conj(Vd2.T);
+Uc1, sc1, Vc1 = np.linalg.svd(AC1, full_matrices=True); Vc1 = np.conj(Vc1.T);
+normd1 = sd1.max(); normd2 = sd2.max(); normc1 = sc1.max()
 
+s21 = []; scd = [];
+for k in range(len(sd1)):
+   scd.append(np.linalg.norm(AC1@Vd1[:,k]))
+   s21.append(np.linalg.norm(AD2@Vd1[:,k]))
+s21 = np.array(s21); scd = np.array(scd);
+
+plt.figure()#figsize=(6,4))
+plt.plot(np.log10(sc1[:200]/normc1), 'ko:', linewidth=4, markersize=9, label='XY Spectrum')
+plt.plot(np.log10(scd[:200]/normc1), 'rx-', linewidth=2, label='XY-XX Cross Spectrum')
+plt.xlabel('Mode index')
+plt.ylabel('Normalized magnitude')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+plt.figure()#figsize=(6,4))
+plt.plot(np.log10(sd2[:200] / normd2), 'ko:', linewidth=4, markersize=9, label='YY Spectrum')
+plt.plot(np.log10(s21[:200] / normd2), 'rx-', linewidth=1.5, label='YY-XX Cross Spectrum')
+plt.xlabel('Mode index')
+plt.ylabel('Normalized magnitude')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
 
 
 #%% images of the polarized field on the entrance pupil
@@ -336,61 +367,71 @@ def make_5x4_figure(images, page_size=(8.5, 11),
        im = ax.imshow(img, aspect='equal', cmap='coolwarm',origin='lower',vmax=img.max(),vmin=img.min())
        ax.axis('off')
        cbar = fig.colorbar(im, ax=ax, fraction=0.045, pad=0.02)
+       ticks = np.linspace(np.floor(img.min()), np.floor(img.max()),4)
+       cbar.set_ticks(ticks)
+       cbar.ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.1f'))
        cbar.ax.tick_params(labelsize=12)
+       for label in cbar.ax.get_yticklabels():
+           label.set_fontweight('bold')
 
     return(None)
 
-#
+#%%
 #the make list of images for 5x4 grid
-imagelist = [];
+DHinfofilename = "DHinfo02092026_XXYYopt.pickle";
+with open(DHinfofilename, "rb") as fp: dxy = pickle.load(fp)
+DHinfofilename = "DHinfo02092026_XXopt.pickle";
+with open(DHinfofilename, "rb") as fp: dx = pickle.load(fp)
+
 sol45a = dx['sols45'][-1]; sol45b = dxy['sols45'][-1]
 solxaa = dx['solsxa'][-1]; solxab = dxy['solsxa'][-1]
 i1=100; i2=180
 
+#intensities are halved in order to agree with the iteration figure.  This way, the total intensity is the sum of all four images
 im0  = A.DMcmd2Intensity(cmd0,   pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im0 = np.log10(im0 + 1.e-8)
+im0 = np.log10(im0/2 + 1.e-8)
 im1  = A.DMcmd2Intensity(cmd0,   pmat='dom2'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im1 = np.log10(im1 + 1.e-8)
+im1 = np.log10(im1/2 + 1.e-8)
 im2  = A.DMcmd2Intensity(cmd0,   pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im2 = np.log10(im2 + 1.e-11)
+im2 = np.log10(im2/2 + 1.e-11)
 im3  = A.DMcmd2Intensity(cmd0,   pmat='cross2' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im3 = np.log10(im3 + 1.e-11)
+im3 = np.log10(im3/2 + 1.e-11)
 
 im4  = A.DMcmd2Intensity(sol45a,   pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im4 = np.log10(im4 + 1.e-11)
+im4 = np.log10(im4/2 + 1.e-11)
 im5  = A.DMcmd2Intensity(sol45a,   pmat='dom2'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im5 = np.log10(im5 + 1.e-11)
+im5 = np.log10(im5/2 + 1.e-11)
 im6  = A.DMcmd2Intensity(sol45a,   pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im6 = np.log10(im6 + 1.e-11)
+im6 = np.log10(im6/2 + 1.e-11)
 im7  = A.DMcmd2Intensity(sol45a,   pmat='cross2' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im7 = np.log10(im7 + 1.e-11)
+im7 = np.log10(im7/2 + 1.e-11)
 
 im8  = A.DMcmd2Intensity(sol45b,   pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im8 = np.log10(im8 + 1.e-11)
+im8 = np.log10(im8/2 + 1.e-11)
 im9  = A.DMcmd2Intensity(sol45b,   pmat='dom2'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im9 = np.log10(im9 + 1.e-11)
+im9 = np.log10(im9/2 + 1.e-11)
 im10  = A.DMcmd2Intensity(sol45b,   pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im10 = np.log10(im10 + 1.e-11)
+im10 = np.log10(im10/2 + 1.e-11)
 im11  = A.DMcmd2Intensity(sol45b,   pmat='cross2' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im11 = np.log10(im11 + 1.e-11)
+im11 = np.log10(im11/2 + 1.e-11)
 
 im12  = A.DMcmd2Intensity(solxaa,   pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im12 = np.log10(im12 + 1.e-9)
+im12 = np.log10(im12/2 + 1.e-9)
 im13  = A.DMcmd2Intensity(solxaa,   pmat='dom2'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im13 = np.log10(im13 + 1.e-9)
+im13 = np.log10(im13/2 + 1.e-9)
 im14  = A.DMcmd2Intensity(solxaa,   pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im14 = np.log10(im14 + 1.e-11)
+im14 = np.log10(im14/2 + 1.e-11)
 im15  = A.DMcmd2Intensity(solxaa,   pmat='cross2' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im15 = np.log10(im15 + 1.e-11)
+im15 = np.log10(im15/2 + 1.e-11)
 
 im16  = A.DMcmd2Intensity(solxab,   pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im16 = np.log10(im16 + 1.e-9)
+im16 = np.log10(im16/2 + 1.e-9)
 im17  = A.DMcmd2Intensity(solxab,   pmat='dom2'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im17 = np.log10(im17 + 1.e-9)
+im17 = np.log10(im17/2 + 1.e-9)
 im18  = A.DMcmd2Intensity(solxab,   pmat='cross' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im18 = np.log10(im18 + 1.e-11)
+im18 = np.log10(im18/2 + 1.e-11)
 im19  = A.DMcmd2Intensity(solxab,   pmat='cross2' ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
-im19 = np.log10(im19 + 1.e-11)
+im19 = np.log10(im19/2 + 1.e-11)
 
 imagelist = [im0, im1, im2, im3, im4, im5, im6, im7, im8, im9,
           im10, im11, im12, im13, im14, im15, im16, im17, im18, im19]
