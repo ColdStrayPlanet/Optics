@@ -145,13 +145,20 @@ def MatrixDiffMeasure(A,B):
 def WeightedSingularVectorCompare(A,B,svA, svB,weighting='quadratic'):
     if A.shape != B.shape:
        raise ValueError("Input matrices A and B must have the same shape.")
-       weighttypes =  {'quadratic': None, 'linear': None,'none': None}
+       weighttypes =  {'quadratic': None, 'linear': None}
     if np.ndim(A) != 2 or np.ndim(svA) != 1 or np.ndim(svB) != 1 or svA.shape[0] != A.shape[1] or svB.shape[0] != B.shape[1]:
        raise ValueError("At least one of the inputs is misdimensioned.")
     if weighting not in weighttypes:
        raise ValueError(f"kwarg weighting must be one of the allowed options: {weighttypes.keys()}")
+    if weighting == 'linear':
+       pass
+    if weighting == 'quadratic':
+       svA = svA**2; svB = svB**2
 
+    sumA = np.sum(svA); sumB = np.sum(svB)
+    A = (A*svA)/sumA; B = (B*svB)/sumB
 
+    return (np.linalg.norm( np.conj(B.T).dot(A),'fro')**2)
 
 #
 AD1 = A.SysD[ DHinfo['pl45'],:]
