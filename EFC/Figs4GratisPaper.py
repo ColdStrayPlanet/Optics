@@ -120,14 +120,52 @@ plt.tight_layout()
 plt.show()
 
 
-#%%  SVD cross spectrum figures
-AD1 = A.SysD[DHinfo['pl45'],:]
+#%% Linear System Analysis
+
+#It is easy to show that for two complex numbers a and b that the value of the
+#  real number s that minimizes |(a - exp(j s)*b)|^2 is s = arg(a conj(b) ).
+#  The same thing works for matrices with the dot product of two matrices A and B
+#  defined as \sum_i \sum_j A_{ij} B_{ij}^*
+#
+def matrixdot(A,B):
+      return( np.sum( A*np.conj(B) ) )
+def MatrixDiffMeasure(A,B):
+   if A.shape != B.shape:
+      raise ValueError("Input matrices A and B must have the same shape.")
+   if np.allclose(A, np.zeros(A.shape)) or np.allclose(B, np.zeros(B.shape)):
+      raise ValueError("Input matrices A and B both must be nonzero.")
+   s = np.exp(1j*np.angle( matrixdot(A,B) ))
+   AA = np.real(matrixdot(A,A));  BB = np.real(matrixdot(B,B))
+   h = np.real( matrixdot(A -s*B, A - s*B) )
+   h /= np.sqrt(AA*BB)
+   return(h)
+
+#The columns of the matrices A and B are singular vectors and svA and svB
+#  are the corresponding singular values
+def WeightedSingularVectorCompare(A,B,svA, svB,weighting='quadratic'):
+    if A.shape != B.shape:
+       raise ValueError("Input matrices A and B must have the same shape.")
+       weighttypes =  {'quadratic': None, 'linear': None,'none': None}
+    if np.ndim(A) != 2 or np.ndim(svA) != 1 or np.ndim(svB) != 1 or svA.shape[0] != A.shape[1] or svB.shape[0] != B.shape[1]:
+       raise ValueError("At least one of the inputs is misdimensioned.")
+    if weighting not in weighttypes:
+       raise ValueError(f"kwarg weighting must be one of the allowed options: {weighttypes.keys()}")
+
+
+
+#
+AD1 = A.SysD[ DHinfo['pl45'],:]
 AD2 = A.SysD2[DHinfo['pl45'],:]
-AC1 = A.SysC[DHinfo['pl45'],:]
+AC1 = A.SysC[ DHinfo['pl45'],:]
+AC2 = A.SysC2[DHinfo['pl45'],:]
+
+#  SVD cross spectrum figures
 Ud1, sd1, Vd1 = np.linalg.svd(AD1, full_matrices=True); Vd1 = np.conj(Vd1.T);
 Ud2, sd2, Vd2 = np.linalg.svd(AD2, full_matrices=True); Vd2 = np.conj(Vd2.T);
 Uc1, sc1, Vc1 = np.linalg.svd(AC1, full_matrices=True); Vc1 = np.conj(Vc1.T);
-normd1 = sd1.max(); normd2 = sd2.max(); normc1 = sc1.max()
+Uc2, sc2, Vc2 = np.linalg.svd(AC2, full_matrices=True); Vc2 = np.conj(Vc2.T);
+
+normd1 = sd1.max(); normd2 = sd2.max(); normc1 = sc1.max(); normc2 = sc2.max()
 
 s21 = []; scd = [];
 for k in range(len(sd1)):
@@ -226,77 +264,6 @@ plt.plot(np.log10(Ccroxa/2),'purple',linewidth=6, label="Secondary (XY)");
 plt.plot(np.log10(Ccroxab/2),'cyan',linewidth=2, label="Secondary (YX)");
 plt.legend(loc='upper right');
 plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
-
-
-#%%
-
-#lambda functions for random modulation
-cmddom = lambda  :  0.001*np.pi*(np.random.rand(len(DHinfo['sols45'][-1])) - 0.5)
-cmdcro = lambda  :   0.01*np.pi*(np.random.rand(len(DHinfo['sols45'][-1])) - 0.5)
-# calculate intensities with random modulation
-Nmodulations = 50
-Ccromod45  = []
-Cdommod45  = []
-Ccromodax = []
-Cdommodax = []
-Imodoa45   = []
-Imodoaax  = []
-for k in range(Nmodulations):
-   cd = cmddom();
-   if k == 0:
-      cd *= 0.
-   Cdommodax.append(Cdax(-1, cd))
-   Ccromodax.append(Ccax(-1, cd))
-   Imodoaax.append(Ioaax(-1, cd))
-Cdommodax = np.array(Cdommodax)
-Ccromodax = np.array(Ccromodax)
-Imodoaax  = np.array(Imodoaax)
-print(f"DH primary intensity:{Cdommodax[0]}, DH secondary intensity:{Ccromodax[0]}, Off-axis source intensity: {Imodoaax[0]}" )
-
-plt.figure();  # figure showing modulation about DH command
-plt.plot(Cdommodax,'ko', label='Primary');
-plt.plot(Ccromodax*25.,'rx', label='25*Secondary');
-plt.plot(Imodoaax*2.e-9, 'g*',label='5.e-9 Planet' );
-plt.legend(loc='lower right'); plt.title('Random Modulation about DH Command');
-plt.xlabel('modulation trial');plt.ylabel('Intensity (contrast)');
-
-
-#%%
-plt.figure(); plt.imshow(np.log10(Ioa45dh[100:180,100:180] + 1.e-4),origin='lower',cmap='coolwarm'); plt.colorbar();
-plt.title('off-axis source, dark hole DM command')
-
-fig, axs = plt.subplots(
-    3, 2,
-    figsize=(6, 7.5),     # Plus compact verticalement
-    sharex='col',
-    sharey='row'
-)
-# Réduire les marges entre subplots
-plt.subplots_adjust(wspace=0.05, hspace=0.02)
-images = [
-    np.log10(I0[100:180, 100:180] + 1e-7),
-    np.log10(I0c[100:180, 100:180] + 1e-10),
-    np.log10(Idh45[100:180, 100:180] + 1e-10),
-    np.log10(Idh45c[100:180, 100:180] + 1e-12),
-    np.log10(IdhXax[100:180, 100:180] + 1e-9),
-    np.log10(IdhXaxc[100:180, 100:180] + 1e-10),
-]
-titles = [
-    "Nominal Primary", "Nominal Secondary",
-    "Primary Hole #1", "Secondary Hole #1",
-    "Primary Hole #2", "Secondary Hole #2"
-]
-for idx, ax in enumerate(axs.flat):
-    im = ax.imshow(images[idx], origin='lower', cmap='coolwarm')
-    ax.set_title(titles[idx], fontsize=9)
-    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
-# Optimisation finale de l'agencement
-plt.tight_layout(pad=0.5)  # Réduit encore l’espace autour
-plt.show()
-
-
-
-
 
 
 
