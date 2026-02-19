@@ -84,40 +84,24 @@ plt.figure(); plt.imshow(np.abs(Eyykn)/norm,cmap='coolwarm',extent=ext); plt.col
 plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{yy}}[:,976]|$'); #raw f-string
 
 
+#%%
 
-#%%  SVD cross spectrum figures
-ADr = A.SysD[DHinfo['pl45'],:]
-ACr = A.SysC[DHinfo['pl45'],:]
-Ud, sd, Vd = np.linalg.svd(ADr, full_matrices=True); Vd = np.conj(Vd.T);
-Uc, sc, Vc = np.linalg.svd(ACr, full_matrices=True); Vc = np.conj(Vc.T);
+AD1 = A.SysD[ DHinfo['pl45'],:]
+AD2 = A.SysD2[DHinfo['pl45'],:]
+AC1 = A.SysC[ DHinfo['pl45'],:]
+AC2 = A.SysC2[DHinfo['pl45'],:]
 
-sdmax = np.max(sd); scmax = np.max(sc)
-sdc = []; scd = [];
-for k in range(len(sd)):
-   sdc.append(np.linalg.norm(ADr@Vc[:,k]))
-   scd.append(np.linalg.norm(ACr@Vd[:,k]))
-sdc = np.array(sdc); scd = np.array(scd);
+Ud1, sd1, Vd1 = np.linalg.svd(AD1, full_matrices=True); Vd1 = np.conj(Vd1.T);
+Ud2, sd2, Vd2 = np.linalg.svd(AD2, full_matrices=True); Vd2 = np.conj(Vd2.T);
+Uc1, sc1, Vc1 = np.linalg.svd(AC1, full_matrices=True); Vc1 = np.conj(Vc1.T);
+Uc2, sc2, Vc2 = np.linalg.svd(AC2, full_matrices=True); Vc2 = np.conj(Vc2.T);
+normd1 = sd1.max(); normd2 = sd2.max(); normc1 = sc1.max(); normc2 = sc2.max()
 
-plt.figure(figsize=(6,4))
-plt.plot(sd[:200] / sdmax, 'ko-', linewidth=2, label='Primary Spectrum')
-plt.plot(sdc[:200] / sdmax, 'rx-', linewidth=1.5, label='1-2 Cross Spectrum')
-plt.xlabel('Mode index k')
-plt.ylabel('Normalized magnitude')
-#plt.title('')
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
 
-plt.figure(figsize=(6,4))
-plt.plot(sc[:200] / scmax, 'ko-', linewidth=2, label='Secondary Spectrum')
-plt.plot(scd[:200] / scmax, 'rx-', linewidth=1.5, label='2-1 Cross Spectrum')
-plt.xlabel('Mode index k')
-plt.ylabel('Normalized magnitude')
-#plt.title('')
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+#ADr = A.SysD[DHinfo['pl45'],:]
+#ACr = A.SysC[DHinfo['pl45'],:]
+#Ud, sd, Vd = np.linalg.svd(ADr, full_matrices=True); Vd = np.conj(Vd.T);
+#Uc, sc, Vc = np.linalg.svd(ACr, full_matrices=True); Vc = np.conj(Vc.T);
 
 
 #%% Linear System Analysis
@@ -142,11 +126,13 @@ def MatrixDiffMeasure(A,B):
 
 #The columns of the matrices A and B are singular vectors and svA and svB
 #  are the corresponding singular values
-def WeightedSingularVectorCompare(A,B,svA, svB,weighting='quadratic'):
+def SingularVectorCompare(A,B,svA, svB,weighting='quadratic'):
+    weighttypes =  {'quadratic': None, 'linear': None}
     if A.shape != B.shape:
        raise ValueError("Input matrices A and B must have the same shape.")
-       weighttypes =  {'quadratic': None, 'linear': None}
-    if np.ndim(A) != 2 or np.ndim(svA) != 1 or np.ndim(svB) != 1 or svA.shape[0] != A.shape[1] or svB.shape[0] != B.shape[1]:
+    if svA.shape != svB.shape:
+       raise ValueError("Input vectors svA and svB must have the same shape.")
+    if np.ndim(A) != 2 or np.ndim(svA) != 1 or np.ndim(svB) != 1 or svA.shape[0] != svB.shape[0] :
        raise ValueError("At least one of the inputs is misdimensioned.")
     if weighting not in weighttypes:
        raise ValueError(f"kwarg weighting must be one of the allowed options: {weighttypes.keys()}")
@@ -155,34 +141,30 @@ def WeightedSingularVectorCompare(A,B,svA, svB,weighting='quadratic'):
     if weighting == 'quadratic':
        svA = svA**2; svB = svB**2
 
+    if len(svA) < A.shape[1]:
+       A = A[:,:len(svA)];
+       B = B[:,:len(svB)]
     sumA = np.sum(svA); sumB = np.sum(svB)
     A = (A*svA)/sumA; B = (B*svB)/sumB
+    numerator = np.linalg.norm( np.conj(B.T).dot(A),'fro')**2
+    denominator = np.sqrt( (np.linalg.norm( np.conj(B.T).dot(B),'fro')**2) *
+                           (np.linalg.norm( np.conj(A.T).dot(A),'fro')**2))
+    return ( numerator/denominator )
 
-    return (np.linalg.norm( np.conj(B.T).dot(A),'fro')**2)
 
-#
-AD1 = A.SysD[ DHinfo['pl45'],:]
-AD2 = A.SysD2[DHinfo['pl45'],:]
-AC1 = A.SysC[ DHinfo['pl45'],:]
-AC2 = A.SysC2[DHinfo['pl45'],:]
+#%%
 
-#  SVD cross spectrum figures
-Ud1, sd1, Vd1 = np.linalg.svd(AD1, full_matrices=True); Vd1 = np.conj(Vd1.T);
-Ud2, sd2, Vd2 = np.linalg.svd(AD2, full_matrices=True); Vd2 = np.conj(Vd2.T);
-Uc1, sc1, Vc1 = np.linalg.svd(AC1, full_matrices=True); Vc1 = np.conj(Vc1.T);
-Uc2, sc2, Vc2 = np.linalg.svd(AC2, full_matrices=True); Vc2 = np.conj(Vc2.T);
-
-normd1 = sd1.max(); normd2 = sd2.max(); normc1 = sc1.max(); normc2 = sc2.max()
-
-s21 = []; scd = [];
+sd2d1 = []; sc1d1 = []; sc1c2 = []; sd1c1 = [];
 for k in range(len(sd1)):
-   scd.append(np.linalg.norm(AC1@Vd1[:,k]))
-   s21.append(np.linalg.norm(AD2@Vd1[:,k]))
-s21 = np.array(s21); scd = np.array(scd);
-
+   sc1d1.append(np.linalg.norm(AC1@Vd1[:,k])/normc1)
+   sd2d1.append(np.linalg.norm(AD2@Vd1[:,k])/normd2)
+   sc1c2.append(np.linalg.norm(AC1@Vc2[:,k])/normc1)
+   sd1c1.append(np.linalg.norm(AD1@Vc1[:,k])/normd1)
+sd2d1 = np.array(sd2d1); sc1d1 = np.array(sc1d1); sc1c2 = np.array(sc1c2); sd1c1 = np.array(sd1c1)
+#%%
 plt.figure()#figsize=(6,4))
 plt.plot(np.log10(sc1[:200]/normc1), 'ko:', linewidth=4, markersize=9, label='XY Spectrum')
-plt.plot(np.log10(scd[:200]/normc1), 'rx-', linewidth=2, label='XY-XX Cross Spectrum')
+plt.plot(np.log10(sc1d1[:200]), 'rx-', linewidth=2, label='XY-XX Cross Spectrum')
 plt.xlabel('Mode index')
 plt.ylabel('Normalized magnitude')
 plt.legend()
@@ -190,8 +172,28 @@ plt.grid(True)
 plt.tight_layout()
 
 plt.figure()#figsize=(6,4))
+plt.plot(np.log10(sd1[:200]/normd1), 'ko:', linewidth=4, markersize=9, label='XX Spectrum')
+plt.plot(np.log10(sd1c1[:200]), 'rx-', linewidth=2, label='XX-XY Cross Spectrum')
+plt.xlabel('Mode index')
+plt.ylabel('Normalized magnitude')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+plt.figure()#figsize=(6,4))
+plt.plot(np.log10(sc1[:200]/normc1), 'ko:', linewidth=4, markersize=9, label='XY Spectrum')
+plt.plot(np.log10(sc1c2[:200]), 'rx-', linewidth=2, label='XY-YX Cross Spectrum')
+plt.xlabel('Mode index')
+plt.ylabel('Normalized magnitude')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+
+
+plt.figure()#figsize=(6,4))
 plt.plot(np.log10(sd2[:200] / normd2), 'ko:', linewidth=4, markersize=9, label='YY Spectrum')
-plt.plot(np.log10(s21[:200] / normd2), 'rx-', linewidth=1.5, label='YY-XX Cross Spectrum')
+plt.plot(np.log10(sd2d1[:200] ), 'rx-', linewidth=1.5, label='YY-XX Cross Spectrum')
 plt.xlabel('Mode index')
 plt.ylabel('Normalized magnitude')
 plt.legend()
@@ -310,7 +312,7 @@ cmd0 = np.zeros((441,))
 def make_5x4_figure(images, page_size=(8.5, 11),
                 left_margin=1, right_margin=1,
                 top_margin=1, bottom_margin=1,
-                caption_space=1.5):
+                caption_space=1.5,dotcolor='green',centerdot=None):
     """
     Crée une figure Letter portrait avec grille 5x4 d´images et espace pour caption.
     images : list d'images (length = 20)
@@ -339,6 +341,8 @@ def make_5x4_figure(images, page_size=(8.5, 11),
     axes = gs.subplots()
     for ax, img in zip(axes.flat, images):
        im = ax.imshow(img, aspect='equal', cmap='coolwarm',origin='lower',vmax=img.max(),vmin=img.min())
+       if centerdot is not None:
+          ax.plot(centerdot[0],centerdot[1],marker='o',color=dotcolor,markersize=12)
        ax.axis('off')
        cbar = fig.colorbar(im, ax=ax, fraction=0.045, pad=0.02)
        ticks = np.linspace(np.floor(img.min()), np.floor(img.max()),4)
@@ -359,8 +363,9 @@ with open(DHinfofilename, "rb") as fp: dx = pickle.load(fp)
 
 sol45a = dx['sols45'][-1]; sol45b = dxy['sols45'][-1]
 solxaa = dx['solsxa'][-1]; solxab = dxy['solsxa'][-1]
-i1=100; i2=180
+i1=100; i2=180; centerdot=(28,28)
 
+cmd0 = np.zeros(dx['sols45'][-1].shape)
 #intensities are halved in order to agree with the iteration figure.  This way, the total intensity is the sum of all four images
 im0  = A.DMcmd2Intensity(cmd0,   pmat='dom'   ,return_grad=False).reshape((256,256))[i1:i2,i1:i2]
 im0 = np.log10(im0/2 + 1.e-8)
@@ -409,5 +414,6 @@ im19 = np.log10(im19/2 + 1.e-11)
 
 imagelist = [im0, im1, im2, im3, im4, im5, im6, im7, im8, im9,
           im10, im11, im12, im13, im14, im15, im16, im17, im18, im19]
-
-make_5x4_figure(imagelist)
+#%%
+make_5x4_figure(imagelist,left_margin=0.1, right_margin=0.8, top_margin=0.0, bottom_margin=0.02,
+caption_space=0,dotcolor='green',centerdot=centerdot)
