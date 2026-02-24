@@ -24,12 +24,12 @@ CroMat = np.load(join(PropMatLoc,Crofn));
 DomMat2 = np.load(join(PropMatLoc,Dom2fn));
 CroMat2 = np.load(join(PropMatLoc,Cro2fn));
 DHinfo = None
-
 A = EFCm.EFC(EFCm.B21, EFCm.B33, DomMat, CroMat, Dom2PropMat=DomMat2, Cross2PropMat=CroMat2)
-#%%
+
+#%%  load or make dark hole solutions
 loadDHinfo = True
 if loadDHinfo:
-   DHinfofilename = "DHinfo02092026_XXYYopt.pickle"
+   DHinfofilename = "DHinfo02092026_XXYYopt.pickle" # "DHinfo02092026_XXopt.pickle"
    with open(DHinfofilename, "rb") as fp: DHinfo = pickle.load(fp)
 else:  # dont load DHinfo -- do the optimizations
    pl45 = A.MakePixList( np.round(128 + lamD*np.array([2,5,2,5]) ).astype('int') ) #pixel lists for dark holes
@@ -37,9 +37,7 @@ else:  # dont load DHinfo -- do the optimizations
    print(f"The dark holes have {len(pl45)} and {len(plxa)} pixels.")
    (out45, sols45, cost45) = A.DigDominantHole(np.zeros(441,), pl45, TwoDoms=True, DMconstr=np.pi/2)
    (outxa, solsxa, costxa) = A.DigDominantHole(np.zeros(441,), plxa, TwoDoms=True, DMconstr=np.pi/2)
-
-# evaluate all of the mean intensities in the dark holes
-   if DHinfo is None:
+   if DHinfo is None:  # evaluate all of the mean intensities in the dark holes
       DHinfo = dict()
    DHinfo['sols45'] = sols45;  DHinfo['solsxa'] = solsxa;
    DHinfo['plxa'] = plxa; DHinfo['pl45'] = pl45;
@@ -47,8 +45,6 @@ else:  # dont load DHinfo -- do the optimizations
    DHinfo['ccro45']  = []; DHinfo['ccroxa']  = [] # secondary mean intensities XY
    DHinfo['cdom452'] = []; DHinfo['cdomxa2'] = [] # primary mean intensities YY
    DHinfo['ccro452'] = []; DHinfo['ccroxa2'] = [] # secondary mean intensities YX
-
-
    for sol in DHinfo['sols45']:
      DHinfo['ccro45'].append(np.mean(A.DMcmd2Intensity(sol,'cross',pixlist=DHinfo['pl45'])))
      DHinfo['cdom45'].append(np.mean(A.DMcmd2Intensity(sol,'dom',pixlist=DHinfo['pl45'])))
@@ -61,50 +57,30 @@ else:  # dont load DHinfo -- do the optimizations
      DHinfo['ccroxa2'].append(np.mean(A.DMcmd2Intensity(sol,'cross2',pixlist=DHinfo['plxa'])))
 
 
-#%% show spline columumn 976 ~ (29,19) of the matrices.  Filenames such as Kn29dand19d_Exx.jpg
-kn = 976
-fnyx = join("../..", "EFCSimData/SysMatNorm_Yx_BigBeam2Cg256x256_Lam0.9_33x33.npy")
-fnyy = join("../..", "EFCSimData/SysMatNorm_Yy_BigBeam2Cg256x256_Lam0.9_33x33.npy")
-Bx = np.load(fnyx, mmap_mode='r');  By = np.load(fnyy, mmap_mode='r');
-Exxkn = A.SysD[:,kn].reshape((256,256))
-Exykn = A.SysC[:,kn].reshape((256,256))
-Eyxkn = Bx[:,kn].reshape((256,256))
-Eyykn = By[:,kn].reshape((256,256))
+#%% make iteration figures.  Makes 2 figures, one for each hole.  The corresponding solutions come from the DHinfo file.
+lpl45 = len(DHinfo['pl45']);   lplxa = len(DHinfo['plxa'])
+Cdom45  = np.array(DHinfo['cdom45'])  ; Ccro45  = np.array(DHinfo['ccro45'])
+Cdom45b = np.array(DHinfo['cdom452']) ; Ccro45b = np.array(DHinfo['ccro452'])
+Cdomxa  = np.array(DHinfo['cdomxa'])  ; Ccroxa  = np.array(DHinfo['ccroxa'])
+Cdomxab = np.array(DHinfo['cdomxa2']) ; Ccroxab = np.array( DHinfo['ccroxa2'])
 
-norm = np.abs(Exxkn).max()
-bD = r'\mathbf{D}' # raw string
-ext = [-1.,1.,-1.,1.] #image plane in mm
-plt.figure(); plt.imshow(np.abs(Exxkn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
-plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{xx}}[:,976]|$'); #raw f-string
-plt.figure(); plt.imshow(np.abs(Exykn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
-plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{xy}}[:,976]|$'); #raw f-string
-plt.figure(); plt.imshow(np.abs(Eyxkn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
-plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{yx}}[:,976]|$'); #raw f-string
-plt.figure(); plt.imshow(np.abs(Eyykn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
-plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{yy}}[:,976]|$'); #raw f-string
+plt.figure(); plt.title("Dark Hole Intensity Vs. Iteration");
+plt.plot(np.log10(Cdom45/2),'k',linewidth=6, label="Primary (XX)");
+plt.plot(np.log10(Cdom45b/2),'r',linewidth=2, label="Primary (YY)");
+plt.plot(np.log10(Ccro45/2),'purple',linewidth=6, label="Secondary (XY)");
+plt.plot(np.log10(Ccro45b/2),'cyan',linewidth=2, label="Secondary (YX)");
+plt.legend(loc='upper right');
+plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
 
+plt.figure(); plt.title("Dark Hole Intensity Vs. Iteration");
+plt.plot(np.log10(Cdomxa/2),'k',linewidth=6, label="Primary (XX)");
+plt.plot(np.log10(Cdomxab/2),'r',linewidth=2, label="Primary (YY)");
+plt.plot(np.log10(Ccroxa/2),'purple',linewidth=6, label="Secondary (XY)");
+plt.plot(np.log10(Ccroxab/2),'cyan',linewidth=2, label="Secondary (YX)");
+plt.legend(loc='upper right');
+plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
 
-#%%
-
-AD1 = A.SysD[ DHinfo['pl45'],:]
-AD2 = A.SysD2[DHinfo['pl45'],:]
-AC1 = A.SysC[ DHinfo['pl45'],:]
-AC2 = A.SysC2[DHinfo['pl45'],:]
-
-Ud1, sd1, Vd1 = np.linalg.svd(AD1, full_matrices=True); Vd1 = np.conj(Vd1.T);
-Ud2, sd2, Vd2 = np.linalg.svd(AD2, full_matrices=True); Vd2 = np.conj(Vd2.T);
-Uc1, sc1, Vc1 = np.linalg.svd(AC1, full_matrices=True); Vc1 = np.conj(Vc1.T);
-Uc2, sc2, Vc2 = np.linalg.svd(AC2, full_matrices=True); Vc2 = np.conj(Vc2.T);
-normd1 = sd1.max(); normd2 = sd2.max(); normc1 = sc1.max(); normc2 = sc2.max()
-
-
-#ADr = A.SysD[DHinfo['pl45'],:]
-#ACr = A.SysC[DHinfo['pl45'],:]
-#Ud, sd, Vd = np.linalg.svd(ADr, full_matrices=True); Vd = np.conj(Vd.T);
-#Uc, sc, Vc = np.linalg.svd(ACr, full_matrices=True); Vc = np.conj(Vc.T);
-
-
-#%% Linear System Analysis
+#%% Linear System Analysis functions
 
 #It is easy to show that for two complex numbers a and b that the value of the
 #  real number s that minimizes |(a - exp(j s)*b)|^2 is s = arg(a conj(b) ).
@@ -152,7 +128,18 @@ def SingularVectorCompare(A,B,svA, svB,weighting='quadratic'):
     return ( numerator/denominator )
 
 
-#%%
+#%%  cross spectrum figures
+#Trim matrices to a dark hole and do their SVDs
+AD1 = A.SysD[ DHinfo['pl45'],:]
+AD2 = A.SysD2[DHinfo['pl45'],:]
+AC1 = A.SysC[ DHinfo['pl45'],:]
+AC2 = A.SysC2[DHinfo['pl45'],:]
+
+Ud1, sd1, Vd1 = np.linalg.svd(AD1, full_matrices=True); Vd1 = np.conj(Vd1.T);
+Ud2, sd2, Vd2 = np.linalg.svd(AD2, full_matrices=True); Vd2 = np.conj(Vd2.T);
+Uc1, sc1, Vc1 = np.linalg.svd(AC1, full_matrices=True); Vc1 = np.conj(Vc1.T);
+Uc2, sc2, Vc2 = np.linalg.svd(AC2, full_matrices=True); Vc2 = np.conj(Vc2.T);
+normd1 = sd1.max(); normd2 = sd2.max(); normc1 = sc1.max(); normc2 = sc2.max()
 
 sd2d1 = []; sc1d1 = []; sc1c2 = []; sd1c1 = [];
 for k in range(len(sd1)):
@@ -189,8 +176,6 @@ plt.legend()
 plt.grid(True)
 plt.tight_layout()
 
-
-
 plt.figure()#figsize=(6,4))
 plt.plot(np.log10(sd2[:200] / normd2), 'ko:', linewidth=4, markersize=9, label='YY Spectrum')
 plt.plot(np.log10(sd2d1[:200] ), 'rx-', linewidth=1.5, label='YY-XX Cross Spectrum')
@@ -201,114 +186,47 @@ plt.grid(True)
 plt.tight_layout()
 
 
-#%% images of the polarized field on the entrance pupil
-dir1 = "../../EFCSimData"
-PupXx = np.load(join(dir1, 'BigBeamReduceCG_Pupil_InputX_Ex.npy'))
-PupXy = np.load(join(dir1, 'BigBeamReduceCG_Pupil_InputX_Ey.npy'))
-PupYx = np.load(join(dir1, 'BigBeamReduceCG_Pupil_InputY_Ex.npy'))
-PupYy = np.load(join(dir1, 'BigBeamReduceCG_Pupil_InputY_Ey.npy'))
-ext = [-10,10,-10,10] #pupil extension in mm
-
-plt.figure();plt.imshow(np.abs(PupXx)-1, extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
-plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{xx}|-1$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
-
-plt.figure();plt.imshow(np.abs(PupYy)-1, extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
-plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{yy}|-1$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
-
-plt.figure();plt.imshow(np.abs(PupXx) - np.abs(PupYy), extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
-plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{yy}|- |E_{xx}|$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
-
-plt.figure();plt.imshow(np.abs(PupXy), extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
-plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{xy}|$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
-
-plt.figure();plt.imshow(np.abs(PupYx), extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
-plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{yx}|$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
-
-#%%  full field intensities
-Phasorax = A.LinearPhaseForOffAxisSource(6.1, 0. , output='Phasor')
-Phasor45  = A.LinearPhaseForOffAxisSource(7.2, 45., output='Phasor')
-
-I0    = A.DMcmd2Intensity(0*DHinfo['sols45'][-1],'dom'  ).reshape((256,256));
-I0c   = A.DMcmd2Intensity(0*DHinfo['sols45'][-1],'cross').reshape((256,256));
-Idh45    = A.DMcmd2Intensity(DHinfo['sols45'][-1],'dom'  ).reshape((256,256));
-Idh45c   = A.DMcmd2Intensity(DHinfo['sols45'][-1],'cross').reshape((256,256));
-Ioa45dh  = A.DMcmd2Intensity(DHinfo['sols45'][-1],pmat='dom',OffAxPhasor=Phasor45).reshape((256,256));
-IdhXax   = A.DMcmd2Intensity(DHinfo['solsxa'][-1],'dom'  ).reshape((256,256));
-IdhXaxc  = A.DMcmd2Intensity(DHinfo['solsxa'][-1],'cross').reshape((256,256));
-IoaXaxdh = A.DMcmd2Intensity(DHinfo['solsxa'][-1],pmat='dom',OffAxPhasor=Phasorax).reshape((256,256));
-
 #%%functions for modulated intensities
 # soldex = -1 for the DH command itself. soldex is set to previous values for earlier iterations
 # cmd is an additive command, used for modulations about a given iteration
 Phasorax = A.LinearPhaseForOffAxisSource(6.1, 0. , output='Phasor')
 Phasor45  = A.LinearPhaseForOffAxisSource(7.2, 45., output='Phasor')
-Cd45 = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['sols45'][soldex] + cmd, 'dom', pixlist=DHinfo['pl45'] ))
-Cc45 = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['sols45'][soldex] + cmd, 'cross', pixlist=DHinfo['pl45'] ))
-Cdax = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, 'dom', pixlist=DHinfo['plxa'] ))
-Ccax = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, 'cross', pixlist=DHinfo['plxa'] ))
-Ioa45  = lambda soldex, cmd: np.max(A.DMcmd2Intensity(DHinfo['sols45' ][soldex] + cmd, pmat='dom' ,pixlist=DHinfo['pl45'], OffAxPhasor=Phasor45))
-Ioaax = lambda soldex, cmd : np.max(A.DMcmd2Intensity(DHinfo['solsxa' ][soldex] + cmd ,pmat='dom',pixlist=DHinfo['plxz'], OffAxPhasor=Phasorax))
 
+Cd145   = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['sols45'][soldex] + cmd, pmat='dom', pixlist=DHinfo['pl45'] ))
+Cc145   = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['sols45'][soldex] + cmd, pmat='cross', pixlist=DHinfo['pl45'] ))
+Cd1xa   = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, pmat='dom', pixlist=DHinfo['plxa'] ))
+Cc1xa   = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, pmat='cross', pixlist=DHinfo['plxa'] ))
+Cd2xa   = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, pmat='dom2', pixlist=DHinfo['plxa'] ))
+Cc2xa   = lambda soldex, cmd  : np.mean(A.DMcmd2Intensity(DHinfo['solsxa'][soldex] + cmd, pmat='cross2', pixlist=DHinfo['plxa'] ))
+Ioa45  = lambda soldex, cmd: np.max(A.DMcmd2Intensity(DHinfo['sols45' ][soldex]   + cmd, pmat='dom' ,pixlist=DHinfo['pl45'], OffAxPhasor=Phasor45))
+Ioaxa  = lambda soldex, cmd : np.max(A.DMcmd2Intensity(DHinfo['solsxa' ][soldex]  + cmd, pmat='dom',pixlist=DHinfo['plxz'], OffAxPhasor=Phasorax))
+rndcmd = lambda :  np.pi*np.random.randn(len(DHinfo['sols45'][0]))
 #%%
-
-#make iteration figures
-lpl45 = len(DHinfo['pl45']);   lplxa = len(DHinfo['plxa'])
-Cdom45  = np.array(DHinfo['cdom45'])  ; Ccro45  = np.array(DHinfo['ccro45'])
-Cdom45b = np.array(DHinfo['cdom452']) ; Ccro45b = np.array(DHinfo['ccro452'])
-Cdomxa  = np.array(DHinfo['cdomxa'])  ; Ccroxa  = np.array(DHinfo['ccroxa'])
-Cdomxab = np.array(DHinfo['cdomxa2']) ; Ccroxab = np.array( DHinfo['ccroxa2'])
-
-plt.figure(); plt.title("Dark Hole Intensity Vs. Iteration");
-plt.plot(np.log10(Cdom45/2),'k',linewidth=6, label="Primary (XX)");
-plt.plot(np.log10(Cdom45b/2),'r',linewidth=2, label="Primary (YY)");
-plt.plot(np.log10(Ccro45/2),'purple',linewidth=6, label="Secondary (XY)");
-plt.plot(np.log10(Ccro45b/2),'cyan',linewidth=2, label="Secondary (YX)");
-plt.legend(loc='upper right');
-plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
-
-plt.figure(); plt.title("Dark Hole Intensity Vs. Iteration");
-plt.plot(np.log10(Cdomxa/2),'k',linewidth=6, label="Primary (XX)");
-plt.plot(np.log10(Cdomxab/2),'r',linewidth=2, label="Primary (YY)");
-plt.plot(np.log10(Ccroxa/2),'purple',linewidth=6, label="Secondary (XY)");
-plt.plot(np.log10(Ccroxab/2),'cyan',linewidth=2, label="Secondary (YX)");
-plt.legend(loc='upper right');
-plt.xlabel('Iteration',fontsize=12); plt.ylabel('Intensity',fontsize=12);
-
-
-
+nmods=20; qq = 0.0005
+Idom1 = [];  Idom2 = []; Icro1 = []; Icro2 = []
+for k in range(nmods):
+   if k == 0:
+      rc = 0*rndcmd()
+   else:
+      rc = qq*rndcmd()
+   Idom1.append(Cd1xa(-1, rc))
+   Idom2.append(Cd2xa(-1, rc))
+   Icro1.append(Cc1xa(-1, rc))
+   Icro2.append(Cc2xa(-1, rc))
+Idom1 = np.array(Idom1); Idom2 = np.array(Idom2); Icro1 = np.array(Icro1); Icro2 = np.array(Icro2)
+print(f"Relative STDs of these modulations are {np.std(Idom1[1:])/Idom1[0]}, {np.std(Idom2[1:])/Idom2[0]}, {np.std(Icro1[1:])/Icro1[0]}, {np.std(Icro2[1:])/Icro2[0]}.")
 #%%
-if True:
-   cutpix = 30; isz = (128 - cutpix)/128; ext = [-isz,isz,-isz,isz];ii1=cutpix;ii2=256-cutpix;
-   plt.figure();plt.imshow(np.log10(I0[ii1:ii2,ii1:ii2]+1.e-9) ,extent=ext,origin='lower',cmap='coolwarm'),plt.colorbar();
-   plt.title("Primary PSF",fontsize=10);plt.xlabel("mm",fontsize=10);plt.ylabel("mm",fontsize=10);
-   plt.figure();plt.imshow(np.log10(I0c[ii1:ii2,ii1:ii2]+1.e-12) ,extent=ext,origin='lower',cmap='coolwarm'),plt.colorbar();
-   plt.title("Secondary PSF",fontsize=10);plt.xlabel("mm",fontsize=10);plt.ylabel("mm",fontsize=10);
+plt.figure();
+plt.plot(Idom1,'ko', label="Primary XX");
+plt.plot(Idom2,'b*', label="Primary YY");
+plt.plot(10*Icro1,'ro',label="10x Secondary XY");
+plt.plot(10*Icro2,'g*',label="10x Secondary YX");
+plt.xlabel("modulation index",fontsize=12); plt.ylabel("Intensity");
+plt.legend(loc = 'upper right');
+plt.xticks([0, 5, 10, 15, 20]); plt.yticks(1.e-8*np.array([0.1, 0.2, 0.4, 0.6, 0.8, 1., 1.2]) );
 
-
-if False:
-   #plt.figure(); plt.imshow(np.log10(I0[100:180,100:180] + 1.e-6) ,origin='lower',cmap='coolwarm');plt.colorbar();
-   plt.figure(); plt.imshow(np.log10(IdhXax[100:180,100:180] + 1.e-10),origin='lower',cmap='coolwarm');plt.colorbar();
-   plt.figure(); plt.imshow(np.log10(Idh45[ 100:180,100:180] + 1.e-10),origin='lower',cmap='coolwarm');plt.colorbar();
-
-   #plt.figure(); plt.imshow(np.log10(I0c[100:180,100:180] + 1.e-12) ,origin='lower',cmap='coolwarm');plt.colorbar();
-   plt.figure(); plt.imshow(np.log10(IdhXaxc[100:180,100:180] + 1.e-14) ,origin='lower',cmap='coolwarm');plt.colorbar();
-   #plt.figure(); plt.imshow(np.log10(Idh45c[100:180,100:180] + 1.e-14) ,origin='lower',cmap='coolwarm');plt.colorbar();
-
-   plt.figure(); plt.imshow(np.log10(Ioa45dh[100:180,100:180] + 1.e-4),origin='lower',cmap='coolwarm'); plt.colorbar();
-   plt.title('off-axis source, dark hole DM command')
-   plt.figure(); plt.imshow(np.log10(IoaXaxdh[100:180,100:180] + 1.e-4),origin='lower',cmap='coolwarm'); plt.colorbar();
-   plt.title('off-axis source, dark hole DM command')
-
-
-#%% Make the full page figures showing the nominal and dark hole results.
-DHinfofilename = "DHinfo02092026_XXYYopt.pickle"
-with open(DHinfofilename, "rb") as fp: dxy = pickle.load(fp)
-DHinfofilename = "DHinfo02092026_XXopt.pickle"
-with open(DHinfofilename, "rb") as fp: dx = pickle.load(fp)
-cmd0 = np.zeros((441,))
-
-
-#%%  This is for the full page figures with 24 images
+#%% Function for full page 5x4 figure showing the nominal and dark hole results.
+#  This is for the full page figures with 20 images.  See below for image list.
 def make_5x4_figure(images, page_size=(8.5, 11),
                 left_margin=1, right_margin=1,
                 top_margin=1, bottom_margin=1,
@@ -354,8 +272,7 @@ def make_5x4_figure(images, page_size=(8.5, 11),
 
     return(None)
 
-#%%
-#the make list of images for 5x4 grid
+#%%  make the list of images for 5x4 grid
 DHinfofilename = "DHinfo02092026_XXYYopt.pickle";
 with open(DHinfofilename, "rb") as fp: dxy = pickle.load(fp)
 DHinfofilename = "DHinfo02092026_XXopt.pickle";
@@ -414,6 +331,64 @@ im19 = np.log10(im19/2 + 1.e-11)
 
 imagelist = [im0, im1, im2, im3, im4, im5, im6, im7, im8, im9,
           im10, im11, im12, im13, im14, im15, im16, im17, im18, im19]
-#%%
 make_5x4_figure(imagelist,left_margin=0.1, right_margin=0.8, top_margin=0.0, bottom_margin=0.02,
 caption_space=0,dotcolor='green',centerdot=centerdot)
+
+
+#%% images of the polarized field on the entrance pupil
+dir1 = "../../EFCSimData"
+PupXx = np.load(join(dir1, 'BigBeamReduceCG_Pupil_InputX_Ex.npy'))
+PupXy = np.load(join(dir1, 'BigBeamReduceCG_Pupil_InputX_Ey.npy'))
+PupYx = np.load(join(dir1, 'BigBeamReduceCG_Pupil_InputY_Ex.npy'))
+PupYy = np.load(join(dir1, 'BigBeamReduceCG_Pupil_InputY_Ey.npy'))
+ext = [-10,10,-10,10] #pupil extension in mm
+
+plt.figure();plt.imshow(np.abs(PupXx)-1, extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
+plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{xx}|-1$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
+
+plt.figure();plt.imshow(np.abs(PupYy)-1, extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
+plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{yy}|-1$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
+
+plt.figure();plt.imshow(np.abs(PupXx) - np.abs(PupYy), extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
+plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{yy}|- |E_{xx}|$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
+
+plt.figure();plt.imshow(np.abs(PupXy), extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
+plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{xy}|$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
+
+plt.figure();plt.imshow(np.abs(PupYx), extent=ext, cmap='coolwarm',origin='lower');plt.colorbar();
+plt.xticks(fontsize=8);plt.yticks(fontsize=8);plt.title(r"$|E_{yx}|$");plt.xlabel("x (mm)",fontsize=10);plt.ylabel("y (mm)");
+
+#%% iimages for spline columumn 976 ~ (29,19) of the matrices.  Filenames such as Kn29dand19d_Exx.jpg
+kn = 976
+fnyx = join("../..", "EFCSimData/SysMatNorm_Yx_BigBeam2Cg256x256_Lam0.9_33x33.npy")
+fnyy = join("../..", "EFCSimData/SysMatNorm_Yy_BigBeam2Cg256x256_Lam0.9_33x33.npy")
+Bx = np.load(fnyx, mmap_mode='r');  By = np.load(fnyy, mmap_mode='r');
+Exxkn = A.SysD[:,kn].reshape((256,256))
+Exykn = A.SysC[:,kn].reshape((256,256))
+Eyxkn = Bx[:,kn].reshape((256,256))
+Eyykn = By[:,kn].reshape((256,256))
+
+norm = np.abs(Exxkn).max()
+bD = r'\mathbf{D}' # raw string
+ext = [-1.,1.,-1.,1.] #image plane in mm
+plt.figure(); plt.imshow(np.abs(Exxkn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
+plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{xx}}[:,976]|$'); #raw f-string
+plt.figure(); plt.imshow(np.abs(Exykn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
+plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{xy}}[:,976]|$'); #raw f-string
+plt.figure(); plt.imshow(np.abs(Eyxkn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
+plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{yx}}[:,976]|$'); #raw f-string
+plt.figure(); plt.imshow(np.abs(Eyykn)/norm,cmap='coolwarm',extent=ext); plt.colorbar();
+plt.xlabel('mm');plt.ylabel('mm');plt.title(rf'$|{bD}_{{yy}}[:,976]|$'); #raw f-string
+
+#%% phasors for off-axis sources inside the dark holes
+Phasorax = A.LinearPhaseForOffAxisSource(6.1, 0. , output='Phasor')
+Phasor45  = A.LinearPhaseForOffAxisSource(7.2, 45., output='Phasor')
+#%%  full field intensities
+I0    = A.DMcmd2Intensity(0*DHinfo['sols45'][-1],'dom'  ).reshape((256,256));
+I0c   = A.DMcmd2Intensity(0*DHinfo['sols45'][-1],'cross').reshape((256,256));
+Idh45    = A.DMcmd2Intensity(DHinfo['sols45'][-1],'dom'  ).reshape((256,256));
+Idh45c   = A.DMcmd2Intensity(DHinfo['sols45'][-1],'cross').reshape((256,256));
+Ioa45dh  = A.DMcmd2Intensity(DHinfo['sols45'][-1],pmat='dom',OffAxPhasor=Phasor45).reshape((256,256));
+IdhXax   = A.DMcmd2Intensity(DHinfo['solsxa'][-1],'dom'  ).reshape((256,256));
+IdhXaxc  = A.DMcmd2Intensity(DHinfo['solsxa'][-1],'cross').reshape((256,256));
+IoaXaxdh = A.DMcmd2Intensity(DHinfo['solsxa'][-1],pmat='dom',OffAxPhasor=Phasorax).reshape((256,256));
