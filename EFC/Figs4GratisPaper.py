@@ -130,10 +130,12 @@ def SingularVectorCompare(A,B,svA, svB,weighting='quadratic'):
 
 #%%  cross spectrum figures
 #Trim matrices to a dark hole and do their SVDs
-AD1 = A.SysD[ DHinfo['pl45'],:]
-AD2 = A.SysD2[DHinfo['pl45'],:]
-AC1 = A.SysC[ DHinfo['pl45'],:]
-AC2 = A.SysC2[DHinfo['pl45'],:]
+whichdh = 'pl45'
+#whichdh = 'plxa'
+AD1 = A.SysD[ DHinfo[whichdh],:]
+AD2 = A.SysD2[DHinfo[whichdh],:]
+AC1 = A.SysC[ DHinfo[whichdh],:]
+AC2 = A.SysC2[DHinfo[whichdh],:]
 
 Ud1, sd1, Vd1 = np.linalg.svd(AD1, full_matrices=True); Vd1 = np.conj(Vd1.T);
 Ud2, sd2, Vd2 = np.linalg.svd(AD2, full_matrices=True); Vd2 = np.conj(Vd2.T);
@@ -141,49 +143,89 @@ Uc1, sc1, Vc1 = np.linalg.svd(AC1, full_matrices=True); Vc1 = np.conj(Vc1.T);
 Uc2, sc2, Vc2 = np.linalg.svd(AC2, full_matrices=True); Vc2 = np.conj(Vc2.T);
 normd1 = sd1.max(); normd2 = sd2.max(); normc1 = sc1.max(); normc2 = sc2.max()
 
-sd2d1 = []; sc1d1 = []; sc1c2 = []; sd1c1 = [];
+#cumsum plot to see which modes matter
+lgcumsum = lambda q: np.log10(1 - np.cumsum(q*q)/np.sum(q*q))
+plt.figure();
+plt.plot(lgcumsum(sd1),'kx-',lgcumsum(sd2),'rx-',lgcumsum(sc1),'gx',lgcumsum(sc2),'cx');
+maxmode = 110 # all of the matrices (both dark holes) have less than 1 part in 10^8 fo
+
+#%%
+sd2d1 = []; sc1d1 = []; sc1c2 = []; sd1c1 = []; sc2d1 = []; sc2d2 = [];
 for k in range(len(sd1)):
-   sc1d1.append(np.linalg.norm(AC1@Vd1[:,k])/normc1)
    sd2d1.append(np.linalg.norm(AD2@Vd1[:,k])/normd2)
-   sc1c2.append(np.linalg.norm(AC1@Vc2[:,k])/normc1)
+   sc1d1.append(np.linalg.norm(AC1@Vd1[:,k])/normc1)
+   sc2d2.append(np.linalg.norm(AC2@Vd2[:,k])/normc2)
+   sc2d1.append(np.linalg.norm(AC2@Vd1[:,k])/normc2)
    sd1c1.append(np.linalg.norm(AD1@Vc1[:,k])/normd1)
+   sc1c2.append(np.linalg.norm(AC1@Vc2[:,k])/normc1)
 sd2d1 = np.array(sd2d1); sc1d1 = np.array(sc1d1); sc1c2 = np.array(sc1c2); sd1c1 = np.array(sd1c1)
 #%%
-plt.figure()#figsize=(6,4))
-plt.plot(np.log10(sc1[:200]/normc1), 'ko:', linewidth=4, markersize=9, label='XY Spectrum')
-plt.plot(np.log10(sc1d1[:200]), 'rx-', linewidth=2, label='XY-XX Cross Spectrum')
-plt.xlabel('Mode index')
-plt.ylabel('Normalized magnitude')
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
 
-plt.figure()#figsize=(6,4))
-plt.plot(np.log10(sd1[:200]/normd1), 'ko:', linewidth=4, markersize=9, label='XX Spectrum')
-plt.plot(np.log10(sd1c1[:200]), 'rx-', linewidth=2, label='XX-XY Cross Spectrum')
+plt.figure();  label='YY-XX Cross Spectrum'
+aa = sd2[:maxmode] / normd2; bb = sd2d1[:maxmode]
+plt.plot(np.log10(aa), 'ko:', linewidth=4, markersize=9, label= 'YY Spectrum')
+plt.plot(np.log10(bb), 'rx-', linewidth=1.5, label=label)
 plt.xlabel('Mode index')
 plt.ylabel('Normalized magnitude')
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
+print(label, f": logdiff = {np.linalg.norm(np.log(aa) - np.log(bb))}")
 
-plt.figure()#figsize=(6,4))
-plt.plot(np.log10(sc1[:200]/normc1), 'ko:', linewidth=4, markersize=9, label='XY Spectrum')
-plt.plot(np.log10(sc1c2[:200]), 'rx-', linewidth=2, label='XY-YX Cross Spectrum')
+plt.figure(); label='YX-YY Cross Spectrum'
+aa = sc2[:maxmode]/normc2; bb = sc2d2[:maxmode]
+plt.plot(np.log10(aa), 'ko:', linewidth=4, markersize=9, label='YX Spectrum')
+plt.plot(np.log10(bb), 'rx-', linewidth=2, label=label)
 plt.xlabel('Mode index')
 plt.ylabel('Normalized magnitude')
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
+print(label, f": logdiff = {np.linalg.norm(np.log(aa) - np.log(bb))}")
 
-plt.figure()#figsize=(6,4))
-plt.plot(np.log10(sd2[:200] / normd2), 'ko:', linewidth=4, markersize=9, label='YY Spectrum')
-plt.plot(np.log10(sd2d1[:200] ), 'rx-', linewidth=1.5, label='YY-XX Cross Spectrum')
+plt.figure(); label= 'XY-XX Cross Spectrum'
+aa = sc1[:maxmode]/normc1; bb = sc1d1[:maxmode]
+plt.plot(np.log10(aa), 'ko:', linewidth=4, markersize=9, label='XY Spectrum')
+plt.plot(np.log10(bb), 'rx-', linewidth=2, label=label)
 plt.xlabel('Mode index')
 plt.ylabel('Normalized magnitude')
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
+print(label, f": logdiff = {np.linalg.norm(np.log(aa) - np.log(bb))}")
+
+plt.figure(); label='YX-XX Cross Spectrum'
+aa = sc2[:maxmode]/normc2;  bb = sc2d1[:maxmode]
+plt.plot(np.log10(aa), 'ko:', linewidth=4, markersize=9, label='YX Spectrum')
+plt.plot(np.log10(bb), 'rx-', linewidth=2, label=label)
+plt.xlabel('Mode index')
+plt.ylabel('Normalized magnitude')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+print(label, f": logdiff = {np.linalg.norm(np.log(aa) - np.log(bb))}")
+
+
+if False:
+   plt.figure()#figsize=(6,4))
+   plt.plot(np.log10(sd1[:maxmode]/normd1), 'ko:', linewidth=4, markersize=9, label='XX Spectrum')
+   plt.plot(np.log10(sd1c1[:maxmode]), 'rx-', linewidth=2, label='XX-XY Cross Spectrum')
+   plt.xlabel('Mode index')
+   plt.ylabel('Normalized magnitude')
+   plt.legend()
+   plt.grid(True)
+   plt.tight_layout()
+
+
+   plt.figure()#figsize=(6,4))
+   plt.plot(np.log10(sc1[:maxmode]/normc1), 'ko:', linewidth=4, markersize=9, label='XY Spectrum')
+   plt.plot(np.log10(sc1c2[:200]), 'rx-', linewidth=2, label='XY-YX Cross Spectrum')
+   plt.xlabel('Mode index')
+   plt.ylabel('Normalized magnitude')
+   plt.legend()
+   plt.grid(True)
+   plt.tight_layout()
+
 
 
 #%%functions for modulated intensities
