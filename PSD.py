@@ -30,7 +30,7 @@ def VonKarman2D(kr, k0, sigsq):
    den = 6*np.pi*(kr*kr + k0*k0)**(11./6)
    return(num/den)
 
-
+#%%
 """
 This integrates the 1D or 2D PSD to get the RMS as a function of the maximum spatial
   frequency considered [Kmax - this has nothing to with Kmax in the function
@@ -125,6 +125,7 @@ CircOrSqu - must be 'circle' or 'square' for the output shape.  If 'square',
    the square is 2R-by-2R (see above for 'R').
 outpix - output image size
 """
+#%%
 def SamplePSD2D_logspace(psd, R, Kmin, Kmax, nKr, CircOrSqu='square', useCUPY=False, outpix=512):
     if CircOrSqu not in ['circle','square']:
        raise ValueError("CircOrSqu must be 'circle' or 'square'.")
@@ -140,7 +141,7 @@ def SamplePSD2D_logspace(psd, R, Kmin, Kmax, nKr, CircOrSqu='square', useCUPY=Fa
        circle = (x**2 + y**2 <= R**2).astype(float)
     surf = pp.zeros(x.shape)  # output array
 
-    Kr = pp.geomspace(Kmin, Kmax, nKr)  # spatial frequency radii
+    Kr = np.geomspace(Kmin, Kmax, nKr)  # spatial frequency radii
     for nr in range(nKr):
         kr = Kr[nr]  # magnitude of spatial frequency
         if nr == 0 :
@@ -149,7 +150,7 @@ def SamplePSD2D_logspace(psd, R, Kmin, Kmax, nKr, CircOrSqu='square', useCUPY=Fa
            dR = Kr[nKr-1] - Kr[nKr-2]
         else:
            dR = 0.5*(Kr[nr+1] - Kr[nr-1])
-        nphi = 8*kr/Kmin # number of angles
+        nphi = int(8*kr/Kmin) # number of angles
         Phi = pp.linspace(0, 2*pp.pi*(nphi-1)/nphi, nphi) + pp.pi*(np.random.rand() - 0.5)
         dArea =  kr*dR*2*pp.pi/nphi
         for phi in Phi:
@@ -163,7 +164,7 @@ def SamplePSD2D_logspace(psd, R, Kmin, Kmax, nKr, CircOrSqu='square', useCUPY=Fa
     if useCUPY:
         surf = cp.asnumpy(surf)
     return(surf)
-
+#%%
 
 def _SampleExpPSD2D(psd, R, gridspace, Kmin, Kmax, dK, CircOrSqu='square'):
     if CircOrSqu not in ['circle','square']:
